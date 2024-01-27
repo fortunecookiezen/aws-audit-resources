@@ -1,0 +1,54 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  'Creates a role that authorizes cross-account access from one aws account to a security support role in another account.
+  Grants access to the managed job functions in the target account. Deploy only in a single region.
+  Last updated at 2024-01-27 11:27:50 by phillips.james@gmail.com'
+Metadata:
+  Version: 1.0
+Parameters:
+  Contact:
+    Type: String
+    Description: "contact resources for questions about this stack"
+    Default: "James Phillips <phillips.james@gmail.com>"
+  Owner:
+    Type: String
+    Description: "email address of owner of this stack"
+  OrgPrefix:
+    Type: String
+    Description: "Organizational prefix for resources"
+    Default: "fncz"
+    AllowedPattern: "[a-z]*"
+  SourceAccountId:
+    Type: String
+    Description: 12 digit id of the account containing the users to which you're granting access
+    AllowedPattern: "\\d{12}"
+Resources:
+  AssumeRole:
+    Type: AWS::IAM::Role
+    Properties:
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonInspector2ReadOnlyAccess
+        - arn:aws:iam::aws:policy/AWSAuditManagerAdministratorAccess
+        - arn:aws:iam::aws:policy/AWSSecurityHubReadOnlyAccess
+        - arn:aws:iam::aws:policy/AWSSupportAccess
+        - arn:aws:iam::aws:policy/ReadOnlyAccess
+        - arn:aws:iam::aws:policy/SecurityAudit
+      RoleName: !Join [ "-", [ !Ref OrgPrefix, "CrossAccountSecuritySupportRole"] ]
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal: 
+            "AWS": !Sub 'arn:aws:iam::${SourceAccountId}:root'
+          Action:
+          - sts:AssumeRole
+      Tags:
+        - Key: Owner
+          Value: !Ref Owner
+        - Key: Contact
+          Value: !Ref Contact
+Outputs:
+  RootAdminRoleArn:
+    Description: "CrossAccountSupportRole role Arn"
+    Value: !GetAtt AssumeRole.Arn
+  
