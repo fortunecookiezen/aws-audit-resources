@@ -1,0 +1,33 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Create a group whose members can switch roles and access cross account resources'
+Metadata:
+  Version: 0.7
+Parameters:
+  GroupName:
+    Type: String
+    Description: "Name for the group"
+  TargetAccountRoleARNs:
+    Type: CommaDelimitedList
+    Default: "arn:aws:iam::ACCOUNT_ID:role/ROLE_NAME"
+    Description: Comma delimited list of IAM Role ARNs in other accounts
+Resources:
+  AssumeRole:
+    Type: AWS::IAM::Group
+    Properties:
+      GroupName: !Join [ "-", [ !Ref GroupName, !Ref "AWS::Region"] ]
+      Policies:
+      - PolicyName: CrossAccountAccessPolicy
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Action:
+            - sts:AssumeRole
+            Resource: !Ref TargetAccountRoleARNs
+Outputs:
+  RemoteAdminAssumeRoleGroupArn:
+    Description: "Assume Remote Admin Role Group Arn"
+    Value: !GetAtt AssumeRole.Arn
+  RemoteAdminAssumeRoleGroupName:
+    Description: "Assume Remote Admin Role Group Name"
+    Value: !Ref AssumeRole
