@@ -9,16 +9,16 @@ Parameters:
   Contact:
     Type: String
     Description: "contact resources for questions about this stack"
-    Default: "James Phillips <phillips.james@gmail.com>"
+    Default: "James Phillips phillips.james@gmail.com"
   Owner:
     Type: String
     Description: "email address of owner of this stack"
   OrgPrefix:
     Type: String
     Description: "Organizational prefix for resources"
-    Default: "fncz"
+    Default: "opspath"
     AllowedPattern: "[a-z]*"
-  SourceAccountId:
+  PrincipalAccountId:
     Type: String
     Description: 12 digit id of the account containing the users to which you're granting access
     AllowedPattern: "\\d{12}"
@@ -36,10 +36,15 @@ Resources:
         Version: '2012-10-17'
         Statement:
         - Effect: Allow
-          Principal: 
-            "AWS": !Sub 'arn:aws:iam::${SourceAccountId}:root'
+          Principal:
+            AWS: "*" # this is done to allow the use of SSO in the PrincipalAccountId. 
+            # By using the wildcard and the Condition key, you are trusting the PrincipalAccount to manage the user,
+            # just the same as if you used AWS: !Sub 'arn:aws:iam::${PrincipalAccountId}:root' for an iam user.
           Action:
           - sts:AssumeRole
+          Condition:
+            StringEquals:
+              aws:PrincipalAccount: !Ref PrincipalAccountId
       Tags:
         - Key: Owner
           Value: !Ref Owner

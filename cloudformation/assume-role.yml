@@ -1,7 +1,6 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: 'Create a group whose members can switch roles and access cross account resources'
-Metadata:
-  Version: 0.7
+Description: 'Create a group whose members can switch roles and access cross account resources.
+Last updated at 2024-01-27 11:27:50 by phillips.james@gmail.com'
 Parameters:
   GroupName:
     Type: String
