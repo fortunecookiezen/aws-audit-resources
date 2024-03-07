@@ -45,6 +45,16 @@ Resources:
           Condition:
             StringEquals:
               aws:PrincipalAccount: !Ref PrincipalAccountId
+      Policies:
+           - PolicyName: auditmanager
+             PolicyDocument: 
+              Version: "2012-10-17"
+              Statement:
+              - Effect: Allow
+                Action:
+                - auditmanager:Get*
+                - auditmanager:List*
+                Resource: "*"
       Tags:
         - Key: Owner
           Value: !Ref Owner
