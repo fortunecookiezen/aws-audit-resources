@@ -52,8 +52,36 @@ Resources:
               Statement:
               - Effect: Allow
                 Action:
-                - auditmanager:Get*
-                - auditmanager:List*
+                - auditmanager:GetAccountStatus
+                - auditmanager:GetAssessment
+                - auditmanager:GetAssessmentFramework
+                - auditmanager:GetAssessmentReportUrl
+                - auditmanager:GetChangeLogs
+                - auditmanager:GetControl
+                - auditmanager:GetDelegations
+                - auditmanager:GetEvidence
+                - auditmanager:GetEvidenceByEvidenceFolder
+                - auditmanager:GetEvidenceFileUploadUrl
+                - auditmanager:GetEvidenceFolder
+                - auditmanager:GetEvidenceFoldersByAssessment
+                - auditmanager:GetEvidenceFoldersByAssessmentControl
+                - auditmanager:GetInsights
+                - auditmanager:GetInsightsByAssessment
+                - auditmanager:GetOrganizationAdminAccount
+                - auditmanager:GetServicesInScope
+                - auditmanager:GetSettings
+                - auditmanager:ListAssessmentControlInsightsByControlDomain
+                - auditmanager:ListAssessmentFrameworkShareRequests
+                - auditmanager:ListAssessmentFrameworks
+                - auditmanager:ListAssessmentReports
+                - auditmanager:ListAssessments
+                - auditmanager:ListControlDomainInsights
+                - auditmanager:ListControlDomainInsightsByAssessment
+                - auditmanager:ListControlInsightsByControlDomain
+                - auditmanager:ListControls
+                - auditmanager:ListKeywordsForDataSource
+                - auditmanager:ListNotifications
+                - auditmanager:ListTagsForResource
                 Resource: !Sub "arn:${AWS::Partition}:auditmanager:${AWS::Region}:${AWS::AccountId}:assessment/*"
                 Sid: AuditManagerAccess
       Tags:
