@@ -82,7 +82,7 @@ Resources:
                 - auditmanager:ListKeywordsForDataSource
                 - auditmanager:ListNotifications
                 - auditmanager:ListTagsForResource
-                Resource: !Sub "arn:${AWS::Partition}:auditmanager:${AWS::Region}:${AWS::AccountId}:assessment/*"
+                Resource: !Sub "arn:${AWS::Partition}:auditmanager:${AWS::Region}:${AWS::AccountId}:*"
                 Sid: AuditManagerAccess
       Tags:
         - Key: Owner
