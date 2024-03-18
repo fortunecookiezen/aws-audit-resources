@@ -46,7 +46,7 @@ Resources:
             StringEquals:
               aws:PrincipalAccount: !Ref PrincipalAccountId
       Policies:
-           - PolicyName: AuditManagerAccess
+           - PolicyName: AuditManagerReadOnlyAccess
              PolicyDocument: 
               Version: "2012-10-17"
               Statement:
@@ -82,6 +82,7 @@ Resources:
                 - auditmanager:ListKeywordsForDataSource
                 - auditmanager:ListNotifications
                 - auditmanager:ListTagsForResource
+                - notifications:ListNotificationHubs
                 Resource: !Sub "arn:${AWS::Partition}:auditmanager:${AWS::Region}:${AWS::AccountId}:*"
                 Sid: AuditManagerAccess
       Tags:
