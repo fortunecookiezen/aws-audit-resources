@@ -2,7 +2,7 @@ AWSTemplateFormatVersion: '2010-09-09'
 Description: >
   'Creates a role that authorizes cross-account access from one aws account to a security audit role in another account.
   Grants access to the ViewOnlyAccess and SecurityAudit managed job functions in the target account. Deploy only in a single region.
-  Last updated at 2024-01-27 11:27:50 by phillips.james@gmail.com'
+  Last updated at 2024-03-18 23:46:12 by phillips.james@gmail.com'
 Metadata:
   Version: 1.0
 Parameters:
@@ -82,9 +82,26 @@ Resources:
                 - auditmanager:ListKeywordsForDataSource
                 - auditmanager:ListNotifications
                 - auditmanager:ListTagsForResource
-                - notifications:ListNotificationHubs
+                - auditmanager:ValidateAssessmentReportIntegrity
                 Resource: !Sub "arn:${AWS::Partition}:auditmanager:${AWS::Region}:${AWS::AccountId}:*"
                 Sid: AuditManagerAccess
+              - Effect: Allow
+                Action:
+                - aws-portal:View*
+                - notifications-contacts:GetEmailContact
+                - notifications-contacts:ListEmailContacts
+                - notifications-contacts:ListTagsForResource
+                - notifications:GetEventRule
+                - notifications:GetNotificationConfiguration
+                - notifications:GetNotificationEvent
+                - notifications:ListChannels
+                - notifications:ListEventRules
+                - notifications:ListNotificationConfigurations
+                - notifications:ListNotificationEvents
+                - notifications:ListNotificationHubs
+                - notifications:ListTagsForResource
+                Resource: "*"
+                Sid: NotificationsReadOnly
       Tags:
         - Key: Owner
           Value: !Ref Owner
