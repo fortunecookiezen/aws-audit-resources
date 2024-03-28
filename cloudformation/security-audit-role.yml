@@ -2,7 +2,7 @@ AWSTemplateFormatVersion: '2010-09-09'
 Description: >
   'Creates a role that authorizes cross-account access from one aws account to a security audit role in another account.
   Grants access to the ViewOnlyAccess and SecurityAudit managed job functions in the target account. Deploy only in a single region.
-  Last updated at 2024-03-18 23:46:12 by phillips.james@gmail.com'
+  Last updated at 2024-03-28 09:19:18 by phillips.james@gmail.com'
 Metadata:
   Version: 1.0
 Parameters:
@@ -102,6 +102,28 @@ Resources:
                 - notifications:ListTagsForResource
                 Resource: "*"
                 Sid: NotificationsReadOnly
+              - Effect: Allow
+                Action:
+                - access-analyzer:CheckAccessNotGranted
+                - access-analyzer:CheckNoNewAccess
+                - access-analyzer:GetAccessPreview
+                - access-analyzer:GetAnalyzedResource
+                - access-analyzer:GetAnalyzer
+                - access-analyzer:GetArchiveRule
+                - access-analyzer:GetFinding
+                - access-analyzer:GetFindingsStatistics
+                - access-analyzer:GetGeneratedPolicy
+                - access-analyzer:ListAccessPreviewFindings
+                - access-analyzer:ListAccessPreviews
+                - access-analyzer:ListAnalyzedResources
+                - access-analyzer:ListAnalyzers
+                - access-analyzer:ListArchiveRules
+                - access-analyzer:ListFindings
+                - access-analyzer:ListPolicyGenerations
+                - access-analyzer:ListTagsForResource
+                - access-analyzer:ValidatePolicy
+                Resource: "*"
+                Sid: AllowAccessAnalyzerView
       Tags:
         - Key: Owner
           Value: !Ref Owner
