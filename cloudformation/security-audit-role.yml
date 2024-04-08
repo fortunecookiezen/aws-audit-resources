@@ -124,6 +124,12 @@ Resources:
                 - access-analyzer:ValidatePolicy
                 Resource: "*"
                 Sid: AllowAccessAnalyzerView
+              - Effect: Allow
+                Action:
+                - auditmanager:BatchImportEvidenceToAssessmentControl
+                - auditmanager:UpdateAssessmentControl
+                Resource: !Sub "arn:${AWS::Partition}:auditmanager:${AWS::Region}:${AWS::AccountId}:*"
+                Sid: UpdateAuditAssessments
       Tags:
         - Key: Owner
           Value: !Ref Owner
