@@ -2,7 +2,7 @@ AWSTemplateFormatVersion: '2010-09-09'
 Description: >
   'Creates a role that authorizes cross-account access from one aws account to a security audit role in another account.
   Grants access to the ViewOnlyAccess and SecurityAudit managed job functions in the target account. Deploy only in a single region.
-  Last updated at 2024-03-28 09:19:18 by phillips.james@gmail.com'
+  Last updated at 2024-04-08 15:20:54 by phillips.james@gmail.com'
 Metadata:
   Version: 1.0
 Parameters:
