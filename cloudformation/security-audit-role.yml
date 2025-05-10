@@ -2,7 +2,7 @@ AWSTemplateFormatVersion: '2010-09-09'
 Description: >
   'Creates a role that authorizes cross-account access from one aws account to a security audit role in another account.
   Grants access to the ViewOnlyAccess and SecurityAudit managed job functions in the target account. Deploy only in a single region.
-  Last updated at 2024-04-08 15:20:54 by phillips.james@gmail.com'
+  Last updated at 2025-05-10 13:12:45 by phillips.james@gmail.com'
 Metadata:
   Version: 1.0
 Parameters:
@@ -143,13 +143,40 @@ Resources:
                 Sid: CloudTrail
               - Effect: Allow
                 Action:
-                - codeartifact:ListDomains
+                - codeartifact:Describe*
+                - codeartifact:GetDomainPermissionsPolicy
+                - codeartifact:GetRepositoryPermissionsPolicy
+                - codeartifact:List*
                 - codebuild:BatchGetBuilds
+                - codebuild:BatchGetProjects
+                - codebuild:BatchGetReportGroups
+                - codebuild:BatchGetReports
+                - codebuild:Describe*
+                - codebuild:List*
+                - codecommit:BatchGet*
+                - codecommit:Describe*
                 - codecommit:GetApprovalRuleTemplate
-                - codeconnections:ListConnections
-                - codepipeline:ListPipelineExecutions
-                - codestar-notifications:ListNotificationRule
-                - ccodestar-notifications:ListTargets
+                - codecommit:GetBranch
+                - codecommit:GetComment
+                - codecommit:GetCommentsForComparedCommit
+                - codecommit:GetCommentsForPullRequest
+                - codecommit:GetCommit
+                - codecommit:GetCommitHistory
+                - codecommit:GetDifferences
+                - codecommit:GetMergeCommit
+                - codecommit:GetMergeConflicts
+                - codecommit:GetMergeOptions
+                - codecommit:GetPullRequest
+                - codecommit:GetPullRequest*
+                - codecommit:List*
+                - codeconnections:List*
+                - codedeploy:BatchGet*
+                - codedeploy:List*
+                - codepipeline:Get*
+                - codepipeline:List*
+                - codestar:List*
+                - codestar-connections:List*
+                - codestar-notifications:List*
                 Resource: "*"
                 Sid: CodeStar
       Tags:
