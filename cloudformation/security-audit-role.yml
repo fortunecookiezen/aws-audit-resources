@@ -133,7 +133,6 @@ Resources:
               - Effect: Allow
                 Action:
                 - servicediscovery:ListNamespaces
-                - auditmanager:UpdateAssessmentControl
                 Resource: "*"
                 Sid: ServiceDiscovery
               - Effect: Allow
@@ -178,7 +177,7 @@ Resources:
                 - codestar-connections:List*
                 - codestar-notifications:List*
                 Resource: "*"
-                Sid: CodeStar
+                Sid: CodeStarList
       Tags:
         - Key: Owner
           Value: !Ref Owner
