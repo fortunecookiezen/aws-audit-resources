@@ -1,6 +1,6 @@
-# Usefule Scripts
+# Useful Commands and scripts for conducting an audit of aws accounts
 
-## aws organizations commands
+## aws organizations
 
 ### List all active accounts in an organization
 
