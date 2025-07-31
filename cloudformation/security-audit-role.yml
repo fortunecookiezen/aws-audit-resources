@@ -133,8 +133,27 @@ Resources:
               - Effect: Allow
                 Action:
                 - servicediscovery:ListNamespaces
+                - auditmanager:UpdateAssessmentControl
                 Resource: "*"
                 Sid: ServiceDiscovery
+              - Effect: Allow
+                Action:
+                - dynamodb:GetResourcePolicy
+                - ecr:Describe*
+                - guardduty:Describe*
+                - guardduty:Get*
+                - guardduty:List*
+                - macie2:Describe*
+                - macie2:Get*
+                - macie2:List*
+                - shield:Describe*
+                - shield:Get*
+                - shield:List*
+                - wafv2:Describe*
+                - wafv2:Get*
+                - wafv2:List*
+                Resource: "*"
+                Sid: DescribeSecurityServices
               - Effect: Allow
                 Action:
                 - cloudtrail:ListEventDataStores
@@ -177,7 +196,7 @@ Resources:
                 - codestar-connections:List*
                 - codestar-notifications:List*
                 Resource: "*"
-                Sid: CodeStarList
+                Sid: CodeStar
       Tags:
         - Key: Owner
           Value: !Ref Owner
