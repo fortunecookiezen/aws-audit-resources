@@ -1,4 +1,5 @@
 # Useful Commands and scripts for conducting an audit of aws accounts
+
 ## aws iam
 
 ### assume remote role for auditing purposes
@@ -12,8 +13,15 @@ eval $(aws sts assume-role --role-arn $AUDIT_ROLE_ARN \
 
 ## aws organizations
 
-### List all active accounts in an organization
+### List all active accounts in an organization and output a table with the results
 
 ```bash
 aws organizations list-accounts --query 'Accounts[?Status==`ACTIVE`].[Name, Id, Email]' --output table
+```
+
+### List all active accounts in an organization and output a csv file with the results
+
+```bash
+aws organizations list-accounts \
+--query 'Accounts[?Status==`ACTIVE`]' | jq -r '.[] | [.Id, .Name, .Email] | @csv'
 ```
