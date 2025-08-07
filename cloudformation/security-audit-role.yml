@@ -138,6 +138,8 @@ Resources:
                 Sid: ServiceDiscovery
               - Effect: Allow
                 Action:
+                - account:ListRegions
+                - apigateway:GET
                 - dynamodb:GetResourcePolicy
                 - ecr:Describe*
                 - guardduty:Describe*
