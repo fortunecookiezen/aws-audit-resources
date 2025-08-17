@@ -17,7 +17,7 @@ export PS1="[\u@\h \W]\e[1;32m\$(parse_git_branch)\e[0m \e[1;33m\$(get_aws_regio
 PATH=$PATH:$HOME/.local/bin:$HOME/bin
 
 export PATH
-EOF >> ~/.bashrc.d/bashrc
+EOF > ~/.bashrc.d/bashrc
 source ~/.bashrc.d/bashrc
 
 # install terraform
