@@ -36,7 +36,7 @@ else
     echo "No Zsh configuration file found, skipping."
 fi
 # Create a new .zshrc file with the necessary configurations
-cat <<'EOF' >> ~.zshrc
+cat <<'EOF' >> ~/.zshrc
 # Amazon Q pre block. Keep at the top of this file.
 [[ -f "${HOME}/.local/share/amazon-q/shell/zshrc.pre.zsh" ]] && builtin source "${HOME}/.local/share/amazon-q/shell/zshrc.pre.zsh"
 
