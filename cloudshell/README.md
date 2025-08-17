@@ -2,7 +2,7 @@
 
 ## execute setup.sh
 
-curl -fsSL https://rpm.nodesource.com/setup_18.x | bash -
+curl -fsSL https://raw.githubusercontent.com/fortunecookiezen/aws-audit-resources/refs/heads/main/cloudshell/setup.sh | bash -
 
 ## .bashrc.d/bashrc
 
