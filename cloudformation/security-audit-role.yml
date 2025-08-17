@@ -4,7 +4,7 @@ Description: >
   Grants access to the ViewOnlyAccess and SecurityAudit managed job functions in the target account. Deploy only in a single region.
   Last updated at 2025-05-10 13:12:45 by phillips.james@gmail.com'
 Metadata:
-  Version: 1.0
+  Version: 2.0
 Parameters:
   Contact:
     Type: String
@@ -151,8 +151,8 @@ Resources:
                 - macie2:Describe*
                 - macie2:Get*
                 - macie2:List*
-                - s3:GetStorageLensConfiguration,
-                - s3:GetStorageLensDashboard,
+                - s3:GetStorageLensConfiguration
+                - s3:GetStorageLensDashboard
                 - shield:Describe*
                 - shield:Get*
                 - shield:List*

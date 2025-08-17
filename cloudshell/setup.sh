@@ -15,6 +15,10 @@ get_aws_region() {
                 echo $AWS_REGION
         fi
 }
+
+# who uses nano? what kind of children are we raising?
+export EDITOR=`which vi`
+
 export PS1="[\u@\h \W]\e[1;32m\$(parse_git_branch)\e[0m \e[1;33m\$(get_aws_region)\e[0m $ "
 PATH=$PATH:$HOME/.local/bin:$HOME/bin
 

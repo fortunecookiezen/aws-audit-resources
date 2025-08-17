@@ -12,6 +12,7 @@ Before assuming the remote role _remember to export AUDIT_ROLE_ARN_
 eval $(aws sts assume-role --role-arn $AUDIT_ROLE_ARN \
 --role-session-name audit-session | jq -r '.Credentials | "export AWS_ACCESS_KEY_ID=\(.AccessKeyId)\nexport AWS_SECRET_ACCESS_KEY=\(.SecretAccessKey)\nexport AWS_SESSION_TOKEN=\(.SessionToken)\n"')
 ```
+
 ## aws cloudwatch
 
 ### Describe CloudWatch alarms
@@ -160,7 +161,8 @@ npm install -g @cloud-copilot/iam-collect @cloud-copilot/iam-lens --prefix .
 iam-collect init
 iam-collect download --region YOUR_REGION_HERE
 ```
-### generate credential report 
+
+### generate credential report
 
 ```bash
 aws iam generate-credential-report
@@ -194,7 +196,6 @@ aws organizations list-accounts \
 ```
 
 ### Verify technical and security contacts exist
-
 
 ## aws Secretsmanager
 

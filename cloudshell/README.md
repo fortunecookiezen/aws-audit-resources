@@ -1,14 +1,21 @@
 # Using Cloudshell as your audit tool
 
-## execute setup.sh
+## execute [setup.sh](./setup.sh) and be done with it
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/fortunecookiezen/aws-audit-resources/refs/heads/main/cloudshell/setup.sh | bash -
 ```
 
-## .bashrc.d/bashrc
+## Individual Steps for those with commitment issues
+
+### .bashrc.d/bashrc
 
 ```bash
+mkdir -p ~/bin ~/.bashrc.d
+
+cat <<'EOF' >> ~/.bashrc.d/bashrc
+# ~/.bashrc.d/bashrc
+# This file is sourced by ~/.bashrc to set up the environment for AWS CloudShell
 # shell functions
 parse_git_branch() {
         git branch 2> /dev/null | sed -e '/^[^*]/d' -e 's/* \(.*\)/ (\1)/'
@@ -18,13 +25,34 @@ get_aws_region() {
                 echo $AWS_REGION
         fi
 }
+
+# who uses nano? what kind of children are we raising?
+export EDITOR=`which vi`
+
 export PS1="[\u@\h \W]\e[1;32m\$(parse_git_branch)\e[0m \e[1;33m\$(get_aws_region)\e[0m $ "
 PATH=$PATH:$HOME/.local/bin:$HOME/bin
 
 export PATH
+EOF
+
+for file in ~/.bashrc.d/*; do
+    if [[ -f $file ]]; then
+        echo "Sourcing $file"
+        . "$file"
+    fi
+done
 ```
 
+### create .zshrc
+
 ```bash
+if [[ -f ~/.zshrc ]]; then
+    echo "Zsh configuration file found, moving it."
+    mv ~/.zshrc ~/.zshrc.bak
+    echo "Zsh configuration file backed up to ~/.zshrc.bak" 
+else
+    echo "No Zsh configuration file found, skipping."
+fi
 cat <<'EOF' >> ~/.zshrc
 # Amazon Q pre block. Keep at the top of this file.
 [[ -f "${HOME}/.local/share/amazon-q/shell/zshrc.pre.zsh" ]] && builtin source "${HOME}/.local/share/amazon-q/shell/zshrc.pre.zsh"
@@ -77,6 +105,9 @@ autoload -Uz compinit && compinit
 autoload bashcompinit && bashcompinit
 complete -C '/usr/local/bin/aws_completer' aws
 
+# who uses nano? what kind of children are we raising?
+export EDITOR=`which vi`
+
 # actual prompt
 PROMPT='[%n@%m] %c %F{green}$(parse_git_branch)%f %F{214}$(get_region)%f $ '
 
@@ -85,7 +116,7 @@ PROMPT='[%n@%m] %c %F{green}$(parse_git_branch)%f %F{214}$(get_region)%f $ '
 EOF
 ```
 
-## install terraform
+### install terraform
 
 ```bash
 sudo yum install -y yum-utils shadow-utils
@@ -93,7 +124,7 @@ sudo yum-config-manager --add-repo https://rpm.releases.hashicorp.com/AmazonLinu
 sudo yum -y install terraform
 ```
 
-## install iam-collect and iam-lens
+### install iam-collect and iam-lens
 
 ```bash
 npm install -g @cloud-copilot/iam-collect --prefix .
