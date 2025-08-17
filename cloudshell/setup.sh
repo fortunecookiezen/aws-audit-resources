@@ -23,11 +23,12 @@ EOF
 
 for file in ~/.bashrc.d/*; do
     if [[ -f $file ]]; then
+        echo "Sourcing $file"
         . "$file"
     fi
 done
 
-if [[ -f ~/.zshrc]]; then
+if [[ -f ~/.zshrc ]]; then
     echo "Zsh configuration file found, moving it."
     mv ~/.zshrc ~/.zshrc.bak
     echo "Zsh configuration file backed up to ~/.zshrc.bak" 
