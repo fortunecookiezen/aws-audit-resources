@@ -33,9 +33,9 @@ sudo yum-config-manager --add-repo https://rpm.releases.hashicorp.com/AmazonLinu
 sudo yum -y install terraform
 terraform -install-autocomplete
 
-# install nodejs
-sudo yum install -y nodejs
+# install iam-collect and iam-lens
 npm install -g @cloud-copilot/iam-collect --prefix .
 npm install -g @cloud-copilot/iam-lens --prefix .
 
-echo "done with setup.sh"
+echo "done with setup.sh, paste the following into your shell to complete terminal setup:
+ source .bashrc.d/bashrc "
