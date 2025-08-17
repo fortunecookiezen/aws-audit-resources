@@ -2,7 +2,9 @@
 
 ## execute setup.sh
 
+```bash
 curl -fsSL https://raw.githubusercontent.com/fortunecookiezen/aws-audit-resources/refs/heads/main/cloudshell/setup.sh | bash -
+```
 
 ## .bashrc.d/bashrc
 

@@ -3,7 +3,7 @@
 # Setup script for AWS CloudShell environment
 mkdir -p ~/bin ~/.bashrc.d
 
-echo <<'EOF'
+echo <<EOF
 # shell functions
 parse_git_branch() {
         git branch 2> /dev/null | sed -e '/^[^*]/d' -e 's/* \(.*\)/ (\1)/'
@@ -17,7 +17,7 @@ export PS1="[\u@\h \W]\e[1;32m\$(parse_git_branch)\e[0m \e[1;33m\$(get_aws_regio
 PATH=$PATH:$HOME/.local/bin:$HOME/bin
 
 export PATH
-EOF > ~/.bashrc.d/bashrc
+EOF >> ~/.bashrc.d/bashrc
 source ~/.bashrc.d/bashrc
 
 # install terraform
