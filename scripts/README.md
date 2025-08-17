@@ -26,6 +26,13 @@ aws cloudwatch describe-alarms-for-metric --metric-name CPUUtilization --namespa
 
 ## aws EC2 Security Groups
 
+### Generate Instances Report
+
+```bash
+echo "\"InstanceId\",\"KeyName\",\"InstanceProfile\",\"SubnetId\",\"NetworkInterfaceId\",\"VpcId\",\"PublicIp\",\"PublicDnsName\",\"SecurityGroupId\",\"SecurityGroupName\",\"PrivateIpAddress\",\"PrivateDnsName\""
+aws ec2 describe-instances | jq -r '.Reservations[].Instances[] | [.InstanceId,.KeyName,.IamInstanceProfile.Arn,.NetworkInterfaces[].NetworkInterfaceId,.NetworkInterfaces[].SubnetId,.NetworkInterfaces[].VpcId,.NetworkInterfaces[].Association.PublicIp,.NetworkInterfaces[].Association.PublicDnsName,.SecurityGroups[].GroupId,.SecurityGroups[].GroupName,.NetworkInterfaces[].PrivateIpAddress,.NetworkInterfaces[].PrivateDnsName] | @csv'
+```
+
 ### Port 22
 
 ```bash
@@ -46,6 +53,33 @@ aws ec2 describe-security-groups \
 "Name=ip-permission.to-port,Values=80" \
 "Name=ip-permission.cidr,Values=0.0.0.0/0" \
 --query "SecurityGroups[*].[GroupId,GroupName]" --output table
+```
+
+### Port 443
+
+```bash
+aws ec2 describe-security-groups \
+--filters "Name=ip-permission.protocol,Values=tcp" \
+"Name=ip-permission.from-port,Values=443" \
+"Name=ip-permission.to-port,Values=443" \
+"Name=ip-permission.cidr,Values=0.0.0.0/0" \
+--query "SecurityGroups[*].[GroupId,GroupName]" | jq -r '.[] | @csv'
+```
+
+```bash
+aws ec2 describe-security-groups \
+--filters "Name=ip-permission.protocol,Values=tcp" \
+"Name=ip-permission.from-port,Values=3389" \
+"Name=ip-permission.to-port,Values=3389" \
+"Name=ip-permission.cidr,Values=0.0.0.0/0" \
+--query "SecurityGroups[*].[GroupId,GroupName]" | jq -r '.[] | @csv'
+```
+
+### Open Internet Security Groups
+
+```bash
+aws ec2 describe-security-groups \
+--filters "Name=ip-permission.protocol,Values=tcp" "Name=ip-permission.cidr,Values=0.0.0.0/0" --query "SecurityGroups[*]" | jq -r '.[] | [.GroupId, .GroupName, .IpPermissions[].IpRanges[].CidrIp, .IpPermissions[].ToPort] | @csv'
 ```
 
 ```bash
@@ -162,6 +196,13 @@ aws organizations list-accounts \
 ### Verify technical and security contacts exist
 
 
+## aws Secretsmanager
+
+List secret names and arns
+
+```bash
+aws secretsmanager list-secrets --query "SecretList[].[Name, ARN]" | jq -r '.[] | @csv'
+```
 
 ## aws Shield
 

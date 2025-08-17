@@ -140,6 +140,9 @@ Resources:
                 Action:
                 - account:ListRegions
                 - apigateway:GET
+                - dlm:GetLifecyclePolicies
+                - dlm:GetLifecyclePolicy
+                - dlm:ListTagsForResource
                 - dynamodb:GetResourcePolicy
                 - ecr:Describe*
                 - guardduty:Describe*
@@ -148,6 +151,8 @@ Resources:
                 - macie2:Describe*
                 - macie2:Get*
                 - macie2:List*
+                - s3:GetStorageLensConfiguration,
+                - s3:GetStorageLensDashboard,
                 - shield:Describe*
                 - shield:Get*
                 - shield:List*
