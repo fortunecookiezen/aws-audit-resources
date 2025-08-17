@@ -21,7 +21,11 @@ PATH=$PATH:$HOME/.local/bin:$HOME/bin
 export PATH
 EOF
 
-source ~/.bashrc.d/bashrc
+for file in ~/.bashrc.d/*; do
+    if [[ -f $file ]]; then
+        . "$file"
+    fi
+done
 
 # install terraform
 sudo yum install -y yum-utils shadow-utils
@@ -31,4 +35,7 @@ terraform -install-autocomplete
 
 # install nodejs
 sudo yum install -y nodejs
-npm install -g cfn-lint
+npm install -g @cloud-copilot/iam-collect --prefix .
+npm install -g @cloud-copilot/iam-lens --prefix .
+
+echo "done with setup.sh"
