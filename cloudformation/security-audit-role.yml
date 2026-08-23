@@ -2,9 +2,9 @@ AWSTemplateFormatVersion: '2010-09-09'
 Description: >
   'Creates a role that authorizes cross-account access from one aws account to a security audit role in another account.
   Grants access to the ViewOnlyAccess and SecurityAudit managed job functions in the target account. Deploy only in a single region.
-  Last updated at 2025-05-10 13:12:45 by phillips.james@gmail.com'
+  Last updated at 2026-08-23 by phillips.james@gmail.com'
 Metadata:
-  Version: 2.0
+  Version: 3.0
 Parameters:
   Contact:
     Type: String
@@ -22,6 +22,30 @@ Parameters:
     Type: String
     Description: 12 digit id of the account containing the users to which you're granting access
     AllowedPattern: "\\d{12}"
+  TrustedPrincipalArnPattern:
+    Type: String
+    Description: >
+      IAM principal ARN pattern (matched with a StringLike condition) within PrincipalAccountId that is
+      allowed to assume this role. Scope this to the specific SSO permission set or role you use for
+      audit work, rather than trusting every IAM principal in the account, e.g.
+      arn:aws:iam::<PrincipalAccountId>:role/aws-reserved/sso.amazonaws.com/*/AWSReservedSSO_YourPermissionSetName_*
+      Pass "*" only if you intentionally want to trust every IAM principal in PrincipalAccountId.
+  RequireMFA:
+    Type: String
+    Description: >
+      Require aws:MultiFactorAuthPresent on the calling session to assume this role. Only set to "true"
+      once you've confirmed your identity provider/IAM Identity Center propagates MFA status on the
+      credentials it issues - otherwise this can lock everyone out of the role.
+    AllowedValues: ["true", "false"]
+    Default: "true"
+  MaxSessionDurationSeconds:
+    Type: Number
+    Description: "Maximum session duration, in seconds, for role sessions. Must be between 3600 (1 hour) and 43200 (12 hours)."
+    Default: 3600
+    MinValue: 3600
+    MaxValue: 43200
+Conditions:
+  ShouldRequireMFA: !Equals [!Ref RequireMFA, "true"]
 Resources:
   AssumeRole:
     Type: AWS::IAM::Role
@@ -32,62 +56,38 @@ Resources:
         - arn:aws:iam::aws:policy/SecurityAudit
         - arn:aws:iam::aws:policy/job-function/ViewOnlyAccess
       RoleName: !Join [ "-", [ !Ref OrgPrefix, "CrossAccountSecurityAuditRole"] ]
+      MaxSessionDuration: !Ref MaxSessionDurationSeconds
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
         Statement:
         - Effect: Allow
           Principal:
-            AWS: "*" # this is done to allow the use of SSO in the PrincipalAccountId. 
-            # By using the wildcard and the Condition key, you are trusting the PrincipalAccount to manage the user,
-            # just the same as if you used AWS: !Sub 'arn:aws:iam::${PrincipalAccountId}:root' for an iam user.
+            AWS: "*" # this is done to allow the use of SSO in the PrincipalAccountId.
+            # By using the wildcard and the Condition keys, you are trusting only the specific principal(s)
+            # matching TrustedPrincipalArnPattern within PrincipalAccountId - narrower than trusting the
+            # whole account root, since SSO permission set role ARNs contain a generated path segment that
+            # can't be referenced directly as a Principal.
           Action:
           - sts:AssumeRole
-          Condition:
-            StringEquals:
-              aws:PrincipalAccount: !Ref PrincipalAccountId
+          Condition: !If
+            - ShouldRequireMFA
+            - StringEquals:
+                aws:PrincipalAccount: !Ref PrincipalAccountId
+              StringLike:
+                aws:PrincipalArn: !Ref TrustedPrincipalArnPattern
+              Bool:
+                aws:MultiFactorAuthPresent: "true"
+            - StringEquals:
+                aws:PrincipalAccount: !Ref PrincipalAccountId
+              StringLike:
+                aws:PrincipalArn: !Ref TrustedPrincipalArnPattern
       Policies:
-           - PolicyName: AuditManagerReadOnlyAccess
-             PolicyDocument: 
+           - PolicyName: SupplementalReadOnlyAccess
+             PolicyDocument:
               Version: "2012-10-17"
               Statement:
               - Effect: Allow
                 Action:
-                - auditmanager:GetAccountStatus
-                - auditmanager:GetAssessment
-                - auditmanager:GetAssessmentFramework
-                - auditmanager:GetAssessmentReportUrl
-                - auditmanager:GetChangeLogs
-                - auditmanager:GetControl
-                - auditmanager:GetDelegations
-                - auditmanager:GetEvidence
-                - auditmanager:GetEvidenceByEvidenceFolder
-                - auditmanager:GetEvidenceFileUploadUrl
-                - auditmanager:GetEvidenceFolder
-                - auditmanager:GetEvidenceFoldersByAssessment
-                - auditmanager:GetEvidenceFoldersByAssessmentControl
-                - auditmanager:GetInsights
-                - auditmanager:GetInsightsByAssessment
-                - auditmanager:GetOrganizationAdminAccount
-                - auditmanager:GetServicesInScope
-                - auditmanager:GetSettings
-                - auditmanager:ListAssessmentControlInsightsByControlDomain
-                - auditmanager:ListAssessmentFrameworkShareRequests
-                - auditmanager:ListAssessmentFrameworks
-                - auditmanager:ListAssessmentReports
-                - auditmanager:ListAssessments
-                - auditmanager:ListControlDomainInsights
-                - auditmanager:ListControlDomainInsightsByAssessment
-                - auditmanager:ListControlInsightsByControlDomain
-                - auditmanager:ListControls
-                - auditmanager:ListKeywordsForDataSource
-                - auditmanager:ListNotifications
-                - auditmanager:ListTagsForResource
-                - auditmanager:ValidateAssessmentReportIntegrity
-                Resource: !Sub "arn:${AWS::Partition}:auditmanager:${AWS::Region}:${AWS::AccountId}:*"
-                Sid: AuditManagerAccess
-              - Effect: Allow
-                Action:
-                - aws-portal:View*
                 - notifications-contacts:GetEmailContact
                 - notifications-contacts:ListEmailContacts
                 - notifications-contacts:ListTagsForResource
@@ -126,14 +126,7 @@ Resources:
                 Sid: AllowAccessAnalyzerView
               - Effect: Allow
                 Action:
-                - auditmanager:BatchImportEvidenceToAssessmentControl
-                - auditmanager:UpdateAssessmentControl
-                Resource: !Sub "arn:${AWS::Partition}:auditmanager:${AWS::Region}:${AWS::AccountId}:*"
-                Sid: UpdateAuditAssessments
-              - Effect: Allow
-                Action:
                 - servicediscovery:ListNamespaces
-                - auditmanager:UpdateAssessmentControl
                 Resource: "*"
                 Sid: ServiceDiscovery
               - Effect: Allow
@@ -191,7 +184,6 @@ Resources:
                 - codecommit:GetMergeCommit
                 - codecommit:GetMergeConflicts
                 - codecommit:GetMergeOptions
-                - codecommit:GetPullRequest
                 - codecommit:GetPullRequest*
                 - codecommit:List*
                 - codeconnections:List*
@@ -204,13 +196,49 @@ Resources:
                 - codestar-notifications:List*
                 Resource: "*"
                 Sid: CodeStar
+              - Effect: Allow
+                Action:
+                - account:GetAccountInformation
+                - account:GetAlternateContact
+                - account:GetContactInformation
+                - billing:Get*
+                - billing:List*
+                - ce:Describe*
+                - ce:Get*
+                - ce:List*
+                - consolidatedbilling:Get*
+                - consolidatedbilling:List*
+                - cur:Describe*
+                - cur:Get*
+                - freetier:Get*
+                - invoicing:Get*
+                - invoicing:List*
+                - payments:Get*
+                - payments:List*
+                - tax:Get*
+                - tax:List*
+                Resource: "*"
+                Sid: BillingAndAccountAudit
+              - Effect: Allow
+                Action:
+                - bedrock:Get*
+                - bedrock:List*
+                - bedrock-agentcore:Get*
+                - bedrock-agentcore:List*
+                - codewhisperer:Get*
+                - codewhisperer:List*
+                - qbusiness:Get*
+                - qbusiness:List*
+                - qdeveloper:Get*
+                - qdeveloper:List*
+                Resource: "*"
+                Sid: AIServiceAudit
       Tags:
         - Key: Owner
           Value: !Ref Owner
         - Key: Contact
           Value: !Ref Contact
 Outputs:
-  RootAdminRoleArn:
-    Description: "CrossAccountSupportRole role Arn"
+  SecurityAuditRoleArn:
+    Description: "CrossAccountSecurityAuditRole role Arn"
     Value: !GetAtt AssumeRole.Arn
-  
