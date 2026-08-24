@@ -1,5 +1,34 @@
 # Cloudformation Templates for security and audit functions in an AWS Account
 
+## Role assumption flow
+
+Both roles below are deployed into a target/member account and assumed cross-account by a human who has already authenticated through the organization's IAM Identity Center (SSO) in a centralized principal account. The trust policy on each role restricts who can assume it (a specific SSO permission set/role ARN pattern, plus optionally a live MFA claim) rather than trusting the whole principal account.
+
+```mermaid
+flowchart LR
+    subgraph principal["Principal / centralized account (PrincipalAccountId)"]
+        user["Human user"]
+        sso["IAM Identity Center (org SSO)<br/>issues short-lived creds + MFA claim"]
+        permset["Assumed SSO permission set role<br/>arn:...:role/aws-reserved/sso.amazonaws.com/.../AWSReservedSSO_*"]
+        user -->|"1. Authenticate with MFA"| sso
+        sso -->|"2. Federated session"| permset
+    end
+
+    subgraph target["Target / member account"]
+        auditrole["CrossAccountSecurityAuditRole<br/>security-audit-role.yml<br/>Read-only: SecurityAudit, ViewOnlyAccess,<br/>Inspector2, SecurityHub, billing + AI audit"]
+        supportrole["CrossAccountSecuritySupportRole<br/>security-support-role.yml<br/>Read-only + AWS Support cases<br/>+ scoped IR containment"]
+        resources["Account resources<br/>EC2, IAM, S3, GuardDuty, Security Hub, ..."]
+        admin["Account administrator (SME)<br/>for anything beyond containment"]
+    end
+
+    permset -->|"3. sts:AssumeRole<br/>StringLike PrincipalArn<br/>Bool MFA present"| auditrole
+    permset -->|"3. sts:AssumeRole<br/>StringLike PrincipalArn<br/>Bool MFA present"| supportrole
+    auditrole -->|"4. Read-only review"| resources
+    supportrole -->|"4. Investigate (read-only)"| resources
+    supportrole -->|"5. Contain: quarantine IAM,<br/>isolate EC2, lock down S3,<br/>restore logging, update findings,<br/>throttle Lambda"| resources
+    supportrole -.->|"6. Escalate beyond containment scope"| admin
+```
+
 ## security-audit-role.yml
 
 This role incorporates the following AWS Managed permissions to allow access to review service configurations in support of a security reviewer or audit function. This stack is intended to be deployed to support role assumption from a trusted or a centralized IAM account.
