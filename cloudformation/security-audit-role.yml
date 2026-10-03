@@ -28,16 +28,18 @@ Parameters:
       IAM principal ARN pattern (matched with a StringLike condition) within PrincipalAccountId that is
       allowed to assume this role. Scope this to the specific SSO permission set or role you use for
       audit work, rather than trusting every IAM principal in the account, e.g.
-      arn:aws:iam::<PrincipalAccountId>:role/aws-reserved/sso.amazonaws.com/*/AWSReservedSSO_YourPermissionSetName_*
+      arn:aws:iam::<PrincipalAccountId>:role/aws-reserved/sso.amazonaws.com/*AWSReservedSSO_YourPermissionSetName_*
       Pass "*" only if you intentionally want to trust every IAM principal in PrincipalAccountId.
   RequireMFA:
     Type: String
     Description: >
-      Require aws:MultiFactorAuthPresent on the calling session to assume this role. Only set to "true"
-      once you've confirmed your identity provider/IAM Identity Center propagates MFA status on the
-      credentials it issues - otherwise this can lock everyone out of the role.
+      Require aws:MultiFactorAuthPresent on the calling session to assume this role. Must be "false"
+      if your workforce users access AWS through AWS IAM Identity Center: Identity Center sessions never
+      carry aws:MultiFactorAuthPresent (enforce MFA at Identity Center sign-in instead), so "true" locks
+      every SSO user out of the role. Only set to "true" for IAM users or federated principals whose
+      sessions are issued with MFA context (e.g. sts:GetSessionToken with an MFA device).
     AllowedValues: ["true", "false"]
-    Default: "true"
+    Default: "false"
   MaxSessionDurationSeconds:
     Type: Number
     Description: "Maximum session duration, in seconds, for role sessions. Must be between 3600 (1 hour) and 43200 (12 hours)."
@@ -229,7 +231,6 @@ Resources:
                 - codewhisperer:List*
                 - qbusiness:Get*
                 - qbusiness:List*
-                - qdeveloper:Get*
                 - qdeveloper:List*
                 Resource: "*"
                 Sid: AIServiceAudit

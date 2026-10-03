@@ -1,0 +1,63 @@
+---
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  Creates an IAM Access Analyzer with the organization as its zone of trust, and optionally an
+  organization unused access analyzer (a paid feature, disabled by default).
+  Prerequisites: trusted access for IAM Access Analyzer must be enabled in AWS Organizations, and this
+  stack must be deployed in the organization's management account or the Access Analyzer delegated
+  administrator account. Access Analyzer is regional - deploy this stack in every region you use
+  (e.g. with a StackSet) to get full external access coverage.
+Parameters:
+  AnalyzerName:
+    Type: String
+    Description: Name of the external access analyzer
+    Default: "OrganizationAccessAnalyzer"
+  EnableUnusedAccessAnalyzer:
+    Type: String
+    Description: >
+      Also create an unused access analyzer, which reports unused IAM roles, unused IAM user access keys
+      and passwords, and unused permissions across every account in the organization. WARNING: this is a
+      PAID feature, billed monthly per IAM role and IAM user analyzed across all member accounts, for
+      each unused access analyzer you create. Estimate the cost before enabling it
+      (https://aws.amazon.com/iam/access-analyzer/pricing/). IAM is global, so enable this in only one
+      region - enabling it in every region where you deploy this stack multiplies the charge for no
+      additional findings.
+    AllowedValues: ["true", "false"]
+    Default: "false"
+  UnusedAccessAnalyzerName:
+    Type: String
+    Description: Name of the unused access analyzer. Ignored unless EnableUnusedAccessAnalyzer is "true".
+    Default: "OrganizationUnusedAccessAnalyzer"
+  UnusedAccessAgeDays:
+    Type: Number
+    Description: >
+      Number of days without use after which a role, credential, or permission is reported as unused.
+      Ignored unless EnableUnusedAccessAnalyzer is "true".
+    Default: 90
+    MinValue: 1
+    MaxValue: 365
+Conditions:
+  ShouldCreateUnusedAccessAnalyzer: !Equals [!Ref EnableUnusedAccessAnalyzer, "true"]
+Resources:
+  OrganizationAccessAnalyzer:
+    Type: AWS::AccessAnalyzer::Analyzer
+    Properties:
+      AnalyzerName: !Ref AnalyzerName
+      Type: ORGANIZATION
+  OrganizationUnusedAccessAnalyzer:
+    Type: AWS::AccessAnalyzer::Analyzer
+    Condition: ShouldCreateUnusedAccessAnalyzer
+    Properties:
+      AnalyzerName: !Ref UnusedAccessAnalyzerName
+      Type: ORGANIZATION_UNUSED_ACCESS
+      AnalyzerConfiguration:
+        UnusedAccessConfiguration:
+          UnusedAccessAge: !Ref UnusedAccessAgeDays
+Outputs:
+  OrganizationAccessAnalyzerArn:
+    Description: "Organization Access Analyzer Arn"
+    Value: !GetAtt OrganizationAccessAnalyzer.Arn
+  OrganizationUnusedAccessAnalyzerArn:
+    Condition: ShouldCreateUnusedAccessAnalyzer
+    Description: "Organization Unused Access Analyzer Arn"
+    Value: !GetAtt OrganizationUnusedAccessAnalyzer.Arn

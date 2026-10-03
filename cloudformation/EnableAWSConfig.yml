@@ -135,6 +135,7 @@ Resources:
 
   ConfigBucket:
     DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Type: AWS::S3::Bucket
     Properties:
       BucketEncryption:

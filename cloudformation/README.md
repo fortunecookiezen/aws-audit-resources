@@ -2,15 +2,15 @@
 
 ## Role assumption flow
 
-Both roles below are deployed into a target/member account and assumed cross-account by a human who has already authenticated through the organization's IAM Identity Center (SSO) in a centralized principal account. The trust policy on each role restricts who can assume it (a specific SSO permission set/role ARN pattern, plus optionally a live MFA claim) rather than trusting the whole principal account.
+Both roles below are deployed into a target/member account and assumed cross-account by a human who has already authenticated through the organization's IAM Identity Center (SSO) in a centralized principal account. The trust policy on each role restricts who can assume it (a specific SSO permission set/role ARN pattern, plus an optional MFA condition that must stay off for IAM Identity Center users) rather than trusting the whole principal account.
 
 ```mermaid
 flowchart LR
     subgraph principal["Principal / centralized account (PrincipalAccountId)"]
         user["Human user"]
-        sso["IAM Identity Center (org SSO)<br/>issues short-lived creds + MFA claim"]
+        sso["IAM Identity Center (org SSO)<br/>issues short-lived creds"]
         permset["Assumed SSO permission set role<br/>arn:...:role/aws-reserved/sso.amazonaws.com/.../AWSReservedSSO_*"]
-        user -->|"1. Authenticate with MFA"| sso
+        user -->|"1. Authenticate<br/>(MFA enforced at sign-in)"| sso
         sso -->|"2. Federated session"| permset
     end
 
@@ -21,8 +21,8 @@ flowchart LR
         admin["Account administrator (SME)<br/>for anything beyond containment"]
     end
 
-    permset -->|"3. sts:AssumeRole<br/>StringLike PrincipalArn<br/>Bool MFA present"| auditrole
-    permset -->|"3. sts:AssumeRole<br/>StringLike PrincipalArn<br/>Bool MFA present"| supportrole
+    permset -->|"3. sts:AssumeRole<br/>StringLike PrincipalArn"| auditrole
+    permset -->|"3. sts:AssumeRole<br/>StringLike PrincipalArn"| supportrole
     auditrole -->|"4. Read-only review"| resources
     supportrole -->|"4. Investigate (read-only)"| resources
     supportrole -->|"5. Contain: quarantine IAM,<br/>isolate EC2, lock down S3,<br/>restore logging, update findings,<br/>throttle Lambda"| resources
@@ -44,10 +44,10 @@ It also grants a supplemental inline read-only policy (`SupplementalReadOnlyAcce
 
 The trust policy allows `sts:AssumeRole` from principals in the account identified by the `PrincipalAccountId` parameter (via the `aws:PrincipalAccount` condition, since AWS IAM Identity Center permission set role ARNs contain a generated path segment that can't be referenced directly as an IAM `Principal`). Two additional parameters narrow this further:
 
-- **`TrustedPrincipalArnPattern`** (required) — an `aws:PrincipalArn` `StringLike` pattern that restricts assumption to a specific SSO permission set or role, e.g. `arn:aws:iam::<PrincipalAccountId>:role/aws-reserved/sso.amazonaws.com/*/AWSReservedSSO_YourPermissionSetName_*`. Pass `"*"` only if you intentionally want to trust every IAM principal in the account.
-- **`RequireMFA`** (default `"true"`) — adds an `aws:MultiFactorAuthPresent` condition. Only leave this as `"true"` if your identity provider/IAM Identity Center actually propagates MFA status on the sessions it issues; otherwise set it to `"false"` to avoid locking yourself out.
+- **`TrustedPrincipalArnPattern`** (required) — an `aws:PrincipalArn` `StringLike` pattern that restricts assumption to a specific SSO permission set or role, e.g. `arn:aws:iam::<PrincipalAccountId>:role/aws-reserved/sso.amazonaws.com/*AWSReservedSSO_YourPermissionSetName_*`. The leading `*` matches with or without the region path segment Identity Center adds when its home region isn't `us-east-1`. Pass `"*"` only if you intentionally want to trust every IAM principal in the account.
+- **`RequireMFA`** (default `"false"`) — adds an `aws:MultiFactorAuthPresent` condition. Must be `"false"` if your workforce users access AWS through IAM Identity Center: Identity Center sessions never carry `aws:MultiFactorAuthPresent`, so `"true"` locks every SSO user out of the role. Enforce MFA at Identity Center sign-in instead. Only set it to `"true"` for IAM users or federated principals whose sessions are issued with MFA context.
 
-**`MaxSessionDurationSeconds`** (default `3600`, 3600–43200) sets the role's `MaxSessionDuration`.
+**`MaxSessionDurationSeconds`** (default `7200`, 3600–43200) sets the role's `MaxSessionDuration`.
 
 ### Notes (security-audit-role)
 
@@ -67,7 +67,7 @@ This role is for incident investigation and handling: broad read access, AWS Sup
 
 ### Trust policy (security-support-role)
 
-Same hardening as `security-audit-role.yml`: `TrustedPrincipalArnPattern` (required) scopes assumption to a specific SSO permission set/role, `RequireMFA` (default `"true"`) adds an MFA condition, and `MaxSessionDurationSeconds` (default `3600`) sets the role's `MaxSessionDuration`. See that section above for details.
+Same hardening as `security-audit-role.yml`: `TrustedPrincipalArnPattern` (required) scopes assumption to a specific SSO permission set/role, `RequireMFA` (default `"false"`) adds an MFA condition, and `MaxSessionDurationSeconds` (default `3600`) sets the role's `MaxSessionDuration`. See that section above for details.
 
 ### Containment permissions (security-support-role, `IncidentResponseContainment` inline policy)
 
@@ -82,3 +82,29 @@ Beyond read access and Support cases, the role can take these first-response con
 - **`LambdaSecretsContainment`** — throttle a suspicious Lambda function to zero concurrency, disable an event source mapping, and trigger Secrets Manager rotation for a compromised secret (does not reveal secret values).
 
 Deliberately **not** included, left to the account administrator: network-path blocking (VPC NACLs, WAFv2 web ACLs) and SSM Run Command/Session Manager access to instances — both are more powerful and higher-blast-radius than a first-responder role needs when an admin SME is available.
+
+## create_account_access_analyzer.yml
+
+Creates an IAM Access Analyzer (`Type: ORGANIZATION`) that reports resources shared outside the organization, and optionally an unused access analyzer.
+
+Prerequisites: trusted access for IAM Access Analyzer must be enabled in AWS Organizations, and the stack must be deployed in the organization's management account or the Access Analyzer delegated administrator account.
+
+Access Analyzer is regional. Deploy the stack in every region you use (for example with a StackSet) to get full external access coverage.
+
+### Unused access analyzer (paid, off by default)
+
+Set **`EnableUnusedAccessAnalyzer`** to `"true"` to also create an `ORGANIZATION_UNUSED_ACCESS` analyzer, which reports unused IAM roles, unused IAM user access keys and passwords, and unused permissions across every account in the organization. **`UnusedAccessAgeDays`** (default `90`, 1–365) sets how long something must go unused before it is reported.
+
+> [!WARNING]
+> The unused access analyzer is a paid feature, billed monthly per IAM role and IAM user analyzed across all member accounts, for each unused access analyzer you create. Estimate the cost with the [IAM Access Analyzer pricing page](https://aws.amazon.com/iam/access-analyzer/pricing/) before enabling it. IAM is global, so enable it in only one region: turning it on in every region where you deploy this stack multiplies the charge without adding findings.
+
+## Other templates
+
+- **`assume-role.yml`** — creates an IAM group whose members can `sts:AssumeRole` into the role ARNs passed in `TargetAccountRoleARNs`. The default (`arn:aws:iam::123456789012:role/ROLE_NAME`) is a placeholder; override it with your real role ARNs.
+- **`EnableAWSConfig.yml`** — enables AWS Config with an encrypted S3 delivery bucket. The bucket is retained if the stack is deleted or the bucket is replaced, so recorded configuration history isn't lost.
+
+## Validating templates
+
+```bash
+cfn-lint cloudformation/*.yml
+```

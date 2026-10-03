@@ -173,11 +173,19 @@ aws iam get-credential-report --query 'Content' --output text | base64 --decode 
 ```
 
 ```bash
-aws accessanalyzer list-analyzers --query "analyzers[*].[arn,name]" --output table
+aws accessanalyzer list-analyzers --query "analyzers[*].[arn,name,type]" --output table
 ```
 
+External access findings (from the `ACCOUNT` or `ORGANIZATION` analyzer):
+
 ```bash
-aws accessanalyzer list-findings --analyzer-arn $(aws accessanalyzer list-analyzers --query "analyzers[*].[arn]" --output text) --query "findings[*].[resource,resourceType]" --output table
+aws accessanalyzer list-findings --analyzer-arn $(aws accessanalyzer list-analyzers --query "analyzers[?type=='ORGANIZATION' || type=='ACCOUNT'] | [0].arn" --output text) --query "findings[*].[resource,resourceType]" --output table
+```
+
+Unused access findings (only if an `ACCOUNT_UNUSED_ACCESS` or `ORGANIZATION_UNUSED_ACCESS` analyzer exists):
+
+```bash
+aws accessanalyzer list-findings-v2 --analyzer-arn $(aws accessanalyzer list-analyzers --query "analyzers[?type=='ORGANIZATION_UNUSED_ACCESS' || type=='ACCOUNT_UNUSED_ACCESS'] | [0].arn" --output text) --query "findings[*].[resource,resourceType,findingType]" --output table
 ```
 
 ## aws organizations
