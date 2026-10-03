@@ -41,7 +41,7 @@ Parameters:
   MaxSessionDurationSeconds:
     Type: Number
     Description: "Maximum session duration, in seconds, for role sessions. Must be between 3600 (1 hour) and 43200 (12 hours)."
-    Default: 3600
+    Default: 7200
     MinValue: 3600
     MaxValue: 43200
 Conditions:
