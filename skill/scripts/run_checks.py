@@ -10,7 +10,9 @@ Usage:
     # centrally removed via AWS Organizations, a named break-glass/admin
     # role that is intentionally AdministratorAccess, a longer root-reuse
     # review window) pass an exceptions file - see
-    # references/exceptions-and-exclusions.md for the schema:
+    # references/exceptions-and-exclusions.md for the schema, and
+    # references/accepting-findings-process.md for how to decide what
+    # belongs in one:
     python3 run_checks.py snapshot.json --framework cis --exceptions exceptions.json -o findings.json
 
 Reads the JSON produced by collect_aws_data.py (or an equivalent hand-built file
@@ -24,6 +26,16 @@ one only ever produced when an --exceptions file explicitly matches a finding
 list). "accepted" findings are never silently dropped: they stay in the output
 with the evidence and the exception's own justification note attached, so the
 report can show them as deliberately risk-accepted rather than as open issues.
+
+A "root credentials are centrally managed" claim (auto-detected or attested)
+is never trusted on its own: root_mfa_enabled, root_hardware_mfa,
+root_no_access_keys, root_not_used_routinely, and iam_credentials_unused_45d
+(for the root row only) all corroborate it against the actual collected data
+first - no login profile, no access keys, no MFA device - via
+_root_has_no_usable_credentials(). If a claim and the data disagree, the
+claim is not applied and the discrepancy itself is attached to that check's
+evidence, loudly, rather than either silently passing or silently falling
+back with no explanation.
 """
 
 import argparse
@@ -290,12 +302,56 @@ def load_exceptions(path):
         return json.load(f)
 
 
+def _root_has_no_usable_credentials(snap):
+    """Direct evidence from the collected data (never from the exceptions
+    file) of whether root genuinely has no usable sign-in path: no console
+    login profile (password), no access keys, no MFA device. Returns
+    (ok: bool, detail: str). ok is True only when all three are absent -
+    this is the actual substance behind a "root credentials are centrally
+    managed" claim, not a substitute for it. A claim can be true in spirit
+    (org-wide root management is configured) while being stale or
+    incomplete for this specific account (e.g. management was enabled
+    after this account already had a root access key), so the claim alone
+    is never enough to flip these checks to "pass"."""
+    iam = snap.get("iam", {})
+    account_summary = iam.get("account_summary", {})
+    rows = iam.get("credential_report") or []
+    root_row = next((r for r in rows if r.get("user") == "<root_account>"), None)
+
+    problems = []
+
+    if root_row is not None and "password_enabled" in root_row:
+        has_password = str(root_row["password_enabled"]).lower() == "true"
+    else:
+        has_password = bool(account_summary.get("AccountPasswordPresent"))
+    if has_password:
+        problems.append("root has a console login profile (password) set")
+
+    if "root_access_keys_present" in iam:
+        has_keys = bool(iam["root_access_keys_present"])
+    else:
+        has_keys = bool(account_summary.get("AccountAccessKeysPresent"))
+    if has_keys:
+        problems.append("root has at least one access key present")
+
+    if "root_mfa_enabled" in iam:
+        has_mfa = bool(iam["root_mfa_enabled"])
+    else:
+        has_mfa = bool(account_summary.get("AccountMFAEnabled"))
+    if has_mfa:
+        problems.append("root has an MFA device registered")
+
+    if problems:
+        return False, "; ".join(problems)
+    return True, "no login profile, no access keys, no MFA device"
+
+
 def _root_centrally_managed(snap, exceptions):
     """Is this account's root user credentials centrally managed via AWS
     Organizations (deleted/disabled org-wide, not just locally hardened)?
-    Returns (is_managed: bool, evidence_note: str | None).
+    Returns (is_managed: bool, evidence_note: str | None, contradiction: str | None).
 
-    Two ways this can be true:
+    A claim of central management can come from two places:
       1. Auto-detected: collect_aws_data.py successfully called
          iam:ListOrganizationsFeatures (only possible when it ran from the
          Organizations management account or IAM's delegated administrator)
@@ -308,20 +364,48 @@ def _root_centrally_managed(snap, exceptions):
     from inside the member account being audited, where the API genuinely
     cannot be called (AccountNotManagementOrDelegatedAdministrator) and no
     amount of re-trying will produce a different answer.
+
+    Neither source is trusted on its own. A claim only results in
+    is_managed=True when it's corroborated by _root_has_no_usable_credentials:
+    no login profile, no access keys, no MFA device. If a claim exists but
+    the data disagrees with it, is_managed is False (the normal check logic
+    runs, exactly as if no claim had been made) and `contradiction` carries
+    an explanation to attach to that check's evidence - so a stale or
+    incomplete attestation shows up as a loud, specific discrepancy instead
+    of either silently passing or silently falling back with no explanation.
     """
     org = snap.get("organization") or {}
+    claimed = False
+    claim_note = None
     if org.get("root_credentials_management_queryable") and org.get("root_credentials_management_enabled") is True:
-        return True, (
+        claimed = True
+        claim_note = (
             f"Auto-detected via iam:ListOrganizationsFeatures (org {org.get('organization_id')}): "
             "RootCredentialsManagement is enabled."
         )
-    attestation = (exceptions or {}).get("root_credentials_centrally_managed") or {}
-    if attestation.get("attested") is True:
-        by = attestation.get("attested_by", "unspecified")
-        when = attestation.get("attested_date", "unspecified date")
-        note = attestation.get("note", "")
-        return True, f"Attested by {by} on {when} (not auto-verifiable from this account): {note}".rstrip(": ")
-    return False, None
+    else:
+        attestation = (exceptions or {}).get("root_credentials_centrally_managed") or {}
+        if attestation.get("attested") is True:
+            by = attestation.get("attested_by", "unspecified")
+            when = attestation.get("attested_date", "unspecified date")
+            note = attestation.get("note", "")
+            claimed = True
+            claim_note = f"Attested by {by} on {when} (not auto-verifiable from this account): {note}".rstrip(": ")
+
+    if not claimed:
+        return False, None, None
+
+    evidence_ok, detail = _root_has_no_usable_credentials(snap)
+    if evidence_ok:
+        return True, claim_note, None
+
+    contradiction = (
+        f"{claim_note} However, collected data contradicts this: {detail}. "
+        "Not applying the exception - treating as a real finding until this is resolved "
+        "(either central management wasn't actually applied here or has drifted, or the "
+        "exceptions file needs correcting)."
+    )
+    return False, None, contradiction
 
 
 def _match_accepted_admin_principal(name, arn, exceptions):
@@ -350,7 +434,7 @@ def check_root_mfa_enabled(snap, exceptions=None):
     iam = snap.get("iam", {})
     if "root_mfa_enabled" not in iam:
         return None
-    managed, note = _root_centrally_managed(snap, exceptions)
+    managed, note, contradiction = _root_centrally_managed(snap, exceptions)
     if managed:
         return [{
             "resource": "root",
@@ -359,10 +443,13 @@ def check_root_mfa_enabled(snap, exceptions=None):
                         f"root credentials are centrally managed, not self-managed with MFA. {note}",
         }]
     enabled = iam["root_mfa_enabled"]
+    evidence = f"AccountMFAEnabled={iam.get('account_summary', {}).get('AccountMFAEnabled')}"
+    if contradiction:
+        evidence += f" {contradiction}"
     return [{
         "resource": "root",
         "status": "pass" if enabled else "fail",
-        "evidence": f"AccountMFAEnabled={iam.get('account_summary', {}).get('AccountMFAEnabled')}",
+        "evidence": evidence,
     }]
 
 
@@ -370,7 +457,7 @@ def check_root_hardware_mfa(snap, exceptions=None):
     iam = snap.get("iam", {})
     if "root_mfa_enabled" not in iam:
         return None
-    managed, note = _root_centrally_managed(snap, exceptions)
+    managed, note, contradiction = _root_centrally_managed(snap, exceptions)
     if managed:
         return [{
             "resource": "root",
@@ -378,14 +465,20 @@ def check_root_hardware_mfa(snap, exceptions=None):
             "evidence": f"Root credentials are centrally managed; no locally-held MFA device to assess. {note}",
         }]
     if not iam["root_mfa_enabled"]:
-        return [{"resource": "root", "status": "fail", "evidence": "Root has no MFA device at all."}]
+        evidence = "Root has no MFA device at all."
+        if contradiction:
+            evidence += f" {contradiction}"
+        return [{"resource": "root", "status": "fail", "evidence": evidence}]
     has_virtual = iam.get("root_has_virtual_mfa")
     if has_virtual is None:
         return None
+    evidence = "Root MFA device is virtual." if has_virtual else "Root MFA device is not virtual (hardware/FIDO assumed)."
+    if contradiction:
+        evidence += f" {contradiction}"
     return [{
         "resource": "root",
         "status": "fail" if has_virtual else "pass",
-        "evidence": "Root MFA device is virtual." if has_virtual else "Root MFA device is not virtual (hardware/FIDO assumed).",
+        "evidence": evidence,
     }]
 
 
@@ -394,10 +487,12 @@ def check_root_no_access_keys(snap, exceptions=None):
     if "root_access_keys_present" not in iam:
         return None
     present = iam["root_access_keys_present"]
-    managed, note = _root_centrally_managed(snap, exceptions)
+    managed, note, contradiction = _root_centrally_managed(snap, exceptions)
     evidence = f"AccountAccessKeysPresent={iam.get('account_summary', {}).get('AccountAccessKeysPresent')}"
     if managed:
         evidence += f" - root credentials are centrally managed. {note}"
+    elif contradiction:
+        evidence += f" {contradiction}"
     return [{"resource": "root", "status": "fail" if present else "pass", "evidence": evidence}]
 
 
@@ -410,7 +505,7 @@ def check_root_not_used_routinely(snap, exceptions=None):
     if root_row is None:
         return None
 
-    managed, note = _root_centrally_managed(snap, exceptions)
+    managed, note, contradiction = _root_centrally_managed(snap, exceptions)
     if managed:
         return [{
             "resource": "root",
@@ -444,6 +539,8 @@ def check_root_not_used_routinely(snap, exceptions=None):
         evidence = f"Only activity older than the {window_days}-day review window: {', '.join(stale)}. Not treated as routine use."
     else:
         evidence = "No root login or access-key activity recorded in the credential report."
+    if contradiction:
+        evidence += f" {contradiction}"
     return [{"resource": "root", "status": status, "evidence": evidence}]
 
 
@@ -502,15 +599,23 @@ def check_iam_user_mfa_console_access(snap):
     return results
 
 
-def check_iam_credentials_unused_45d(snap):
+def check_iam_credentials_unused_45d(snap, exceptions=None):
     iam = snap.get("iam", {})
     rows = iam.get("credential_report")
     if rows is None:
         return None
+    managed, note, contradiction = _root_centrally_managed(snap, exceptions)
     results = []
     now = _reference_now(snap)
     for row in rows:
         user = row.get("user")
+        if user == "<root_account>" and managed:
+            results.append({
+                "resource": user,
+                "status": "pass",
+                "evidence": f"Root credentials are centrally managed; root cannot sign in to accrue activity. {note}",
+            })
+            continue
         stale_fields = []
         for field in ("password_last_used", "access_key_1_last_used_date", "access_key_2_last_used_date"):
             val = row.get(field)
@@ -523,10 +628,13 @@ def check_iam_credentials_unused_45d(snap):
                     stale_fields.append(f"{field}={val} ({age_days}d)")
             except ValueError:
                 continue
+        evidence = "; ".join(stale_fields) if stale_fields else "All active credentials used within 45 days."
+        if user == "<root_account>" and contradiction:
+            evidence += f" {contradiction}"
         results.append({
             "resource": user,
             "status": "fail" if stale_fields else "pass",
-            "evidence": "; ".join(stale_fields) if stale_fields else "All active credentials used within 45 days.",
+            "evidence": evidence,
         })
     return results
 

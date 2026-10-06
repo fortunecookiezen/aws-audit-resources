@@ -8,9 +8,10 @@ can gather on its own. Three concrete cases:
 1. **Root user has no MFA / no access keys / shows no recent activity, because
    AWS Organizations Root Access Management deleted its credentials
    entirely** — not because nobody bothered to set up MFA. `root_mfa_enabled`,
-   `root_hardware_mfa`, and `root_not_used_routinely` can't tell these apart
-   from raw `GetAccountSummary`/credential-report data; both cases produce
-   identical values (`AccountMFAEnabled=0`, no password, no keys).
+   `root_hardware_mfa`, `root_not_used_routinely`, and `iam_credentials_unused_45d`
+   (for the root row only) can't tell these apart from raw
+   `GetAccountSummary`/credential-report data; both cases produce identical
+   values (`AccountMFAEnabled=0`, no password, no keys).
 2. **`root_not_used_routinely` flags *any* recorded root activity, including a
    five-year-old initial account-setup login** — "used once at account
    creation, never since" and "used last week" look the same to a check that
@@ -54,6 +55,31 @@ before this feature existed just won't have that data, and the check falls
 back to its original per-policy (not per-principal) evaluation, which cannot
 be excepted. Re-collect to get attachment-level data if you need to except a
 specific role.
+
+## A claim is corroborated, never just trusted
+
+Neither an auto-detected result nor an attestation is applied on its own
+authority. Before any of the five root-management-related checks (listed
+above) resolve to `"pass"` because of it, `run_checks.py` independently
+verifies, from the collected data itself, that root genuinely has no usable
+sign-in path: no console login profile (password), no access keys, and no
+MFA device. This is what a centrally-managed root user should actually look
+like — the claim is a statement of *why* that's true, not a replacement for
+checking that it is.
+
+If a claim exists but the data disagrees — for example, an attestation says
+root credentials are centrally managed, but the snapshot shows root still
+has an active access key — the exception is **not** applied. The affected
+check falls through to its normal evaluation logic exactly as if no
+exceptions file had been passed at all, and the discrepancy itself is
+appended to that finding's evidence in plain language, so it surfaces as a
+loud, specific, actionable discrepancy rather than either a false pass or an
+unexplained fail. Typical causes: the attestation is stale (management was
+turned on after this account's root already had a key), someone later
+created root credentials despite management being on, or the attestation
+was simply wrong. Either way, treat it as something to investigate before
+re-running with a corrected (or removed) exceptions file — see
+`accepting-findings-process.md` for how to track that down.
 
 ## File format
 
@@ -105,7 +131,9 @@ you don't need this block at all when the collector could confirm it itself.
 ## What "accepted" means in the output
 
 Findings this file resolves don't disappear. The root-management-related
-checks become ordinary `"pass"` findings (centralization genuinely satisfies
+checks (`root_mfa_enabled`, `root_hardware_mfa`, `root_no_access_keys`,
+`root_not_used_routinely`, and the root row of `iam_credentials_unused_45d`)
+become ordinary `"pass"` findings (centralization genuinely satisfies
 the control's intent — a root user with no usable credentials at all is
 arguably a stronger posture than a self-managed MFA device, not a weaker
 one). An admin-principal match becomes a new `"accepted"` status, distinct
@@ -124,3 +152,17 @@ Keep the exceptions file you used for a given audit run alongside its
 snapshot and findings in `audit-runs/<account_id>-<YYYYMMDD>/` (see
 `evidence-handling.md`) — it's part of what makes the report's judgment calls
 reproducible and reviewable later, not a one-off input to discard.
+
+## Related reference files
+
+- **`accepting-findings-process.md`** — the governance process behind this
+  file: who gets to accept a finding, what evidence they need before doing
+  it, how a contradiction (above) gets investigated and resolved, and how
+  accepted findings get reviewed and re-attested over time rather than
+  accepted once and forgotten.
+- **`documentation-request-template.md`** — a fill-in template to send the
+  account/engagement owner *before* or at the start of an audit, so known
+  admin roles, root-management status, and other expected exceptions are
+  captured up front instead of discovered as false positives after the
+  report is already written. Answers to it transcribe directly into this
+  file's schema.

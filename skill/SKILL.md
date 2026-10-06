@@ -21,6 +21,8 @@ Ask the user which framework to audit against if not already specified:
 
 Confirm the scope is the six core areas listed above. This skill does not audit RDS, EFS, EBS, KMS-general, AWS Config, AWS Organizations governance, Security Hub/GuardDuty enablement, or other services outside those six areas — if the user wants broader coverage, note that it's out of scope for this version rather than guessing at checks that don't exist yet.
 
+If this account's expected exceptions aren't already known (centrally-managed root credentials, named admin roles, other pre-reviewed risks), send the account/engagement owner `references/documentation-request-template.md` now rather than waiting to correct false positives after the report is built — see `references/accepting-findings-process.md`.
+
 ## Step 2: Get the account data
 
 The account data this skill evaluates can come from any of three sources. Pick whichever the user has available.
@@ -70,7 +72,7 @@ python3 scripts/run_checks.py ../audit-runs/<account_id>-<YYYYMMDD>/snapshot.jso
 
 This produces a findings list plus a summary (total findings, pass/fail/accepted counts, breakdown by severity, checks evaluated vs. skipped due to missing data). If a data source is partial (e.g., only an IAM credential report, no S3/CloudTrail/EC2 data), checks that can't be evaluated are marked skipped rather than guessed at — be honest in the report about what wasn't checked rather than implying full coverage.
 
-A few checks (root MFA/access-keys/routine-use, full-admin IAM policies) can produce false positives that aren't visible from the collected data alone — a root user with credentials centrally removed via AWS Organizations, or a deliberately-named admin role. Before treating those findings as real issues, check whether `--exceptions ../audit-runs/<account_id>-<YYYYMMDD>/exceptions.json` applies; see `references/exceptions-and-exclusions.md` for the file format and what it does (and doesn't) auto-detect:
+A few checks (root MFA/access-keys/routine-use/unused-credentials, full-admin IAM policies) can produce false positives that aren't visible from the collected data alone — a root user with credentials centrally removed via AWS Organizations, or a deliberately-named admin role. Before treating those findings as real issues, check whether `--exceptions ../audit-runs/<account_id>-<YYYYMMDD>/exceptions.json` applies; see `references/exceptions-and-exclusions.md` for the file format and what it does (and doesn't) auto-detect, and `references/accepting-findings-process.md` for the process behind deciding what belongs in it:
 
 ```bash
 python3 scripts/run_checks.py ../audit-runs/<account_id>-<YYYYMMDD>/snapshot.json \
@@ -99,7 +101,9 @@ Write the report into the same `audit-runs/<account_id>-<YYYYMMDD>/` directory a
 - `references/soc2-mapping.md` — SOC 2 Trust Services Criteria (CC6.x/CC7.x) mapping
 - `references/iso27001-mapping.md` — ISO/IEC 27001:2022 Annex A control mapping
 - `references/evidence-handling.md` — what to do with a completed audit's output: the `audit-runs/` convention, and the private-repo-or-archive lifecycle for real evidence
-- `references/exceptions-and-exclusions.md` — the `--exceptions` file format: correcting root-account findings for AWS Organizations centralized root access management, a configurable root-reuse review window, and marking named admin roles as a reviewed risk acceptance rather than an open finding
+- `references/exceptions-and-exclusions.md` — the `--exceptions` file format: correcting root-account findings for AWS Organizations centralized root access management, a configurable root-reuse review window, marking named admin roles as a reviewed risk acceptance rather than an open finding, and how a root-management claim gets corroborated against the actual data before it's applied
+- `references/accepting-findings-process.md` — the governance process behind the exceptions file: who can accept a finding, what evidence they need, how a claim/data contradiction gets investigated, and how accepted findings get reviewed over time
+- `references/documentation-request-template.md` — fill-in template to request known exceptions (admin roles, root-management status, other pre-reviewed risks) from the account/engagement owner before the audit runs
 
 ## Scripts
 

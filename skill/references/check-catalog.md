@@ -12,7 +12,7 @@ Master list of the automated checks this skill runs. Each row maps one `check_id
 | `iam_password_policy_length` | IAM | Medium | 2.8 | SEC02-BP01 | CC6.1 | A.5.17 |
 | `iam_password_policy_reuse` | IAM | Medium | 2.9 | SEC02-BP01 | CC6.1 | A.5.17 |
 | `iam_user_mfa_console_access` | MFA | Critical | 2.10 | SEC02-BP01 | CC6.1, CC6.6 | A.8.5 |
-| `iam_credentials_unused_45d` | IAM | Medium | 2.11 | SEC02-BP05 | CC6.3 | A.5.18 |
+| `iam_credentials_unused_45d`¹ | IAM | Medium | 2.11 | SEC02-BP05 | CC6.3 | A.5.18 |
 | `iam_access_key_rotation_90d` | IAM | Medium | 2.12 | SEC02-BP05 | CC6.1 | A.5.17 |
 | `iam_permissions_via_group_only` | IAM | Low | 2.13 | SEC02-BP06 | CC6.3 | A.5.15 |
 | `iam_no_full_admin_policy`¹ | IAM | High | 2.14 | SEC03-BP02 | CC6.3 | A.5.15, A.8.2 |
@@ -33,7 +33,7 @@ Master list of the automated checks this skill runs. Each row maps one `check_id
 
 26 checks total, all within the six core areas (IAM, MFA, S3, CloudTrail/logging, Security Groups/VPC, root account).
 
-¹ Supports `--exceptions` — can resolve to `"pass"` (root checks, via AWS Organizations centralized root access management) or `"accepted"` (`iam_no_full_admin_policy`, via a named admin-principal match) instead of `"fail"`. See `references/exceptions-and-exclusions.md`.
+¹ Supports `--exceptions` — can resolve to `"pass"` (root checks, including `iam_credentials_unused_45d` for the root row only, via AWS Organizations centralized root access management) or `"accepted"` (`iam_no_full_admin_policy`, via a named admin-principal match) instead of `"fail"`. A root-management claim is only applied when it's corroborated by the actual collected data (no login profile, no access keys, no MFA device) — see `references/exceptions-and-exclusions.md`.
 
 ## Manual/extended checks (not automated in v1)
 
