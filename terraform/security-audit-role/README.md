@@ -9,6 +9,8 @@ The role gets the `AmazonInspector2ReadOnlyAccess`, `AWSSecurityHubReadOnlyAcces
 > [!IMPORTANT]
 > Leave `require_mfa` set to `false` if your workforce users sign in through AWS IAM Identity Center. Identity Center sessions never carry `aws:MultiFactorAuthPresent`, so `true` locks every SSO user out of the role. Enforce MFA at Identity Center sign-in instead.
 
+To validate the role (and the audit skill's collector) before wiring up real cross-account SSO trust, you can set `principal_account_id` to this same account and test from CloudShell — see [CloudFormation README: "Testing this role in the same account"](../../cloudformation/README.md#testing-this-role-in-the-same-account-before-wiring-up-cross-account-sso) for the exact steps; they apply identically whether the role was created by this module or by the CloudFormation template.
+
 ## Example
 
 ```hcl

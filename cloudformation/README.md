@@ -51,6 +51,26 @@ The trust policy allows `sts:AssumeRole` from principals in the account identifi
 
 **`MaxSessionDurationSeconds`** (default `7200`, 3600–43200) sets the role's `MaxSessionDuration`.
 
+### Testing this role in the same account before wiring up cross-account SSO
+
+You don't need a separate centralized account to validate that this role and the audit skill actually work together. Deploy it with **`PrincipalAccountId` set to the same account you're deploying into**, and `TrustedPrincipalArnPattern` matching whatever identity you'll actually be using — the trust policy's conditions don't care whether the assuming principal is in a different account or the same one.
+
+Important detail if you're testing from **CloudShell**: CloudShell itself needs permissions beyond anything this role grants (it's deliberately read-only), so you open CloudShell under your normal console identity first — not as the audit role — and assume the role from inside that CloudShell session to get a scoped, temporary credential set for the actual collection step. Concretely, in the account you're testing against:
+
+1. Sign in to that account's AWS Console and open **CloudShell** there (CloudShell always runs under whatever identity is currently signed in — it can't itself assume a role as a precondition to opening).
+2. `aws sts get-caller-identity` to see the exact ARN of that session — use it (or a pattern covering it) as `TrustedPrincipalArnPattern` when you deploy this template.
+3. Assume the role, short-lived, for just this test:
+   ```bash
+   export AUDIT_ROLE_ARN="arn:aws:iam::<account-id>:role/<org_prefix>-CrossAccountSecurityAuditRole"
+   eval $(aws sts assume-role --role-arn $AUDIT_ROLE_ARN \
+     --role-session-name audit-test-session --duration-seconds 900 \
+     | jq -r '.Credentials | "export AWS_ACCESS_KEY_ID=\(.AccessKeyId)\nexport AWS_SECRET_ACCESS_KEY=\(.SecretAccessKey)\nexport AWS_SESSION_TOKEN=\(.SessionToken)\n"')
+   aws sts get-caller-identity   # confirm the Arn now shows assumed-role/<org_prefix>-CrossAccountSecurityAuditRole/audit-test-session
+   ```
+4. Continue with `../skill/SKILL.md` Step 2.3 onward (install boto3, run the collector) using these temporary, scoped credentials rather than your original CloudShell identity — that's what actually exercises the role, not just your own admin access.
+
+Once this works end to end, redeploy (or add a second stack) with `PrincipalAccountId`/`TrustedPrincipalArnPattern` pointed at your real centralized/SSO account for production use.
+
 ### Notes (security-audit-role)
 
 - Audit Manager access was removed (the service is being discontinued); the supplemental policy was renamed from `AuditManagerReadOnlyAccess` accordingly, since it's now read-only end to end.

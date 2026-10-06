@@ -41,7 +41,6 @@ marks checks that need missing data as "skipped" rather than failing them.
 """
 
 import argparse
-import base64
 import csv
 import io
 import json
@@ -168,7 +167,21 @@ def collect_iam(session):
         else:
             report = None
         if report:
-            content = base64.b64decode(report["Content"]).decode("utf-8")
+            # boto3 already base64-decodes IAM's blob-typed Content field for you
+            # (botocore's protocol parser does this automatically) - it arrives as
+            # raw CSV bytes, not a base64 string. That's different from the AWS CLI,
+            # where `aws iam get-credential-report --query Content --output text`
+            # prints the still-base64-encoded value and a manual `base64 --decode`
+            # is required there. Calling base64.b64decode() here on boto3's output
+            # fails with "Incorrect padding" because it's not valid base64 - it's
+            # already decoded. (A try/except-based fallback that re-attempts base64
+            # decoding when utf-8 decoding fails is NOT a safe way to handle both
+            # shapes: a base64 string is itself valid utf-8/ASCII, so the utf-8
+            # decode would silently succeed and hand back the base64 text as if it
+            # were the CSV, rather than erroring - confirmed empirically rather than
+            # assumed.)
+            raw = report["Content"]
+            content = raw.decode("utf-8") if isinstance(raw, bytes) else raw
             credential_rows = list(csv.DictReader(io.StringIO(content)))
     except ClientError as e:
         print(f"  [warn] credential report: {e.response.get('Error', {}).get('Code', e)}", file=sys.stderr)
