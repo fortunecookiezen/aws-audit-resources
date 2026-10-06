@@ -952,7 +952,13 @@ def check_sg_default_restricts_traffic(snap):
             "status": "pass" if restricted else "fail",
             "evidence": f"ingress_rules={len(sg.get('ip_permissions', []))}, egress_rules={len(sg.get('ip_permissions_egress', []))}",
         })
-    return results or None
+    # NOT "or None": an account with security_groups data present but zero
+    # VPCs (e.g. every default VPC has been deleted) genuinely has zero
+    # default security groups to evaluate - that's "evaluated, no applicable
+    # resources," the same as every other check's empty-list convention, not
+    # "skipped for missing data." Collapsing to None here previously misfiled
+    # that case as a data gap in the report's Scope & Methodology appendix.
+    return results
 
 
 def check_ec2_imdsv2_required(snap):
