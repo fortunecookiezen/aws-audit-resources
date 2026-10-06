@@ -32,7 +32,8 @@ Output schema (top level):
       "s3": { ... },
       "cloudtrail": { ... },
       "ec2": { ... },
-      "account_contacts": { ... }
+      "account_contacts": { ... },
+      "organization": { ... }
     }
 
 Any section can be missing or partial (e.g. if the caller lacks a permission,
@@ -248,12 +249,23 @@ def collect_iam(session):
                     if "*" in actions and "*" in resources:
                         is_admin_wildcard = True
                         break
-        policies.append({
+        entry = {
             "policy_name": p["PolicyName"],
             "arn": arn,
             "is_aws_managed": arn.startswith("arn:aws:iam::aws:policy/"),
             "is_admin_wildcard": is_admin_wildcard,
-        })
+        }
+        # Only chase down *who* holds an admin-wildcard policy (extra API calls) -
+        # non-admin policies don't need this for any check we run today.
+        if is_admin_wildcard:
+            attached_entities = _try(
+                lambda: iam.list_entities_for_policy(PolicyArn=arn),
+                default={}, label=f"list_entities_for_policy({arn})",
+            )
+            entry["attached_role_names"] = [r["RoleName"] for r in attached_entities.get("PolicyRoles", [])]
+            entry["attached_user_names"] = [u["UserName"] for u in attached_entities.get("PolicyUsers", [])]
+            entry["attached_group_names"] = [g["GroupName"] for g in attached_entities.get("PolicyGroups", [])]
+        policies.append(entry)
     out["policies"] = policies
 
     # Support role: does any role have AWSSupportAccess attached?
@@ -434,6 +446,62 @@ def collect_account_contacts(session):
     return out
 
 
+def collect_organization(session):
+    """Best-effort AWS Organizations context, used by run_checks.py to avoid
+    flagging a centrally-managed root user as a false positive.
+
+    organizations:DescribeOrganization works from any member account and tells
+    us whether this account is in an org at all. Whether centralized root
+    access management (the feature that lets an org delete/disable member
+    accounts' root credentials - see
+    https://docs.aws.amazon.com/IAM/latest/UserGuide/id_root-enable-root-access.html)
+    is actually turned on is a different question, and iam:ListOrganizationsFeatures
+    - the only API that answers it - can only be called from the
+    Organizations management account or an account delegated as IAM's trusted
+    administrator (AccountNotManagementOrDelegatedAdministrator otherwise).
+    Most audits run from inside the member account being audited, so that call
+    is *expected* to fail here; root_credentials_management_enabled stays None
+    in that case rather than guessing, and run_checks.py's root checks fall
+    back to an explicit --exceptions attestation instead (see
+    references/exceptions-and-exclusions.md).
+    """
+    out = {
+        "in_organization": False,
+        "organization_id": None,
+        "management_account_id": None,
+        "feature_set": None,
+        "root_credentials_management_enabled": None,
+        "root_credentials_management_queryable": False,
+    }
+
+    org = session.client("organizations")
+    try:
+        desc = org.describe_organization()["Organization"]
+    except ClientError as e:
+        code = e.response.get("Error", {}).get("Code", "")
+        if code not in ("AWSOrganizationsNotInUseException", "AccessDeniedException"):
+            print(f"  [warn] organizations.describe_organization: {code}", file=sys.stderr)
+        return out
+
+    out["in_organization"] = True
+    out["organization_id"] = desc.get("Id")
+    out["management_account_id"] = desc.get("MasterAccountId")
+    out["feature_set"] = desc.get("FeatureSet")
+
+    iam = session.client("iam")
+    try:
+        feats = iam.list_organizations_features()
+        out["root_credentials_management_enabled"] = "RootCredentialsManagement" in feats.get("EnabledFeatures", [])
+        out["root_credentials_management_queryable"] = True
+    except ClientError as e:
+        code = e.response.get("Error", {}).get("Code", "")
+        if code != "AccountNotManagementOrDelegatedAdministrator":
+            print(f"  [warn] iam.list_organizations_features: {code}", file=sys.stderr)
+        # else: expected when running from a plain member account - not an error.
+
+    return out
+
+
 def main():
     parser = argparse.ArgumentParser(description="Collect AWS account data for the aws-audit skill.")
     parser.add_argument("--profile", help="named AWS CLI profile to use")
@@ -472,6 +540,9 @@ def main():
 
     print("Collecting account contacts...", file=sys.stderr)
     snapshot["account_contacts"] = collect_account_contacts(session)
+
+    print("Collecting organization context...", file=sys.stderr)
+    snapshot["organization"] = collect_organization(session)
 
     with open(args.output, "w") as f:
         json.dump(snapshot, f, indent=2, default=str)

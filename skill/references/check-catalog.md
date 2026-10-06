@@ -4,10 +4,10 @@ Master list of the automated checks this skill runs. Each row maps one `check_id
 
 | check_id | Area | Severity | CIS v7.0.0 | Well-Architected | SOC 2 | ISO 27001 |
 |---|---|---|---|---|---|---|
-| `root_mfa_enabled` | Root | Critical | 2.5 | SEC01-BP02 | CC6.1, CC6.6 | A.8.5 |
-| `root_hardware_mfa` | Root | Medium | 2.6 | SEC01-BP02 | CC6.1 | A.8.5 |
-| `root_no_access_keys` | Root | Critical | 2.4 | SEC01-BP02 | CC6.1, CC6.3 | A.8.2 |
-| `root_not_used_routinely` | Root | High | 2.7 | SEC01-BP02 | CC6.3 | A.8.2 |
+| `root_mfa_enabled`¹ | Root | Critical | 2.5 | SEC01-BP02 | CC6.1, CC6.6 | A.8.5 |
+| `root_hardware_mfa`¹ | Root | Medium | 2.6 | SEC01-BP02 | CC6.1 | A.8.5 |
+| `root_no_access_keys`¹ | Root | Critical | 2.4 | SEC01-BP02 | CC6.1, CC6.3 | A.8.2 |
+| `root_not_used_routinely`¹ | Root | High | 2.7 | SEC01-BP02 | CC6.3 | A.8.2 |
 | `account_security_contact_registered` | Root | Low | 2.3 | SEC01-BP02 | CC6.2 | A.5.18 |
 | `iam_password_policy_length` | IAM | Medium | 2.8 | SEC02-BP01 | CC6.1 | A.5.17 |
 | `iam_password_policy_reuse` | IAM | Medium | 2.9 | SEC02-BP01 | CC6.1 | A.5.17 |
@@ -15,7 +15,7 @@ Master list of the automated checks this skill runs. Each row maps one `check_id
 | `iam_credentials_unused_45d` | IAM | Medium | 2.11 | SEC02-BP05 | CC6.3 | A.5.18 |
 | `iam_access_key_rotation_90d` | IAM | Medium | 2.12 | SEC02-BP05 | CC6.1 | A.5.17 |
 | `iam_permissions_via_group_only` | IAM | Low | 2.13 | SEC02-BP06 | CC6.3 | A.5.15 |
-| `iam_no_full_admin_policy` | IAM | High | 2.14 | SEC03-BP02 | CC6.3 | A.5.15, A.8.2 |
+| `iam_no_full_admin_policy`¹ | IAM | High | 2.14 | SEC03-BP02 | CC6.3 | A.5.15, A.8.2 |
 | `iam_support_role_exists` | IAM | Low | 2.15 | SEC02-BP02 | CC6.2 | A.8.2 |
 | `s3_block_public_access` | S3 | Critical | 3.1.4 | SEC03-BP07 | CC6.1, CC6.6 | A.5.15 |
 | `s3_bucket_https_only` | S3 | Medium | 3.1.1 | SEC08-BP04 | CC6.7 | A.8.24 |
@@ -33,6 +33,8 @@ Master list of the automated checks this skill runs. Each row maps one `check_id
 
 26 checks total, all within the six core areas (IAM, MFA, S3, CloudTrail/logging, Security Groups/VPC, root account).
 
+¹ Supports `--exceptions` — can resolve to `"pass"` (root checks, via AWS Organizations centralized root access management) or `"accepted"` (`iam_no_full_admin_policy`, via a named admin-principal match) instead of `"fail"`. See `references/exceptions-and-exclusions.md`.
+
 ## Manual/extended checks (not automated in v1)
 
 These controls appear in the frameworks above but are not evaluated by `run_checks.py` in this version — they require either a human judgment call, infrastructure outside the six core areas, or data this skill's collector does not gather. List them in the report's "Scope & Methodology" appendix as out-of-scope rather than silently omitting them.
@@ -46,3 +48,7 @@ These controls appear in the frameworks above but are not evaluated by `run_chec
 ## Severity scale
 
 `Critical` > `High` > `Medium` > `Low`. Used to order the "Key Findings" section of the report and to compute the findings summary's `by_severity` breakdown in `run_checks.py`.
+
+## Status values
+
+Each finding has a `status` of `"pass"`, `"fail"`, or `"accepted"`. `"accepted"` means the underlying fact is still true and still shown in the report, but an auditor has explicitly risk-accepted it via an `--exceptions` file rather than it being an open issue — see `references/exceptions-and-exclusions.md`. `root_mfa_enabled`, `root_hardware_mfa`, and `root_not_used_routinely` can also resolve to an ordinary `"pass"` (not `"accepted"`) when root credentials are centrally managed via AWS Organizations, either auto-detected from the snapshot's `organization` data or attested in the exceptions file; `iam_no_full_admin_policy` is the one check that can produce `"accepted"`, for a specific named role/user/group matched against `accepted_admin_principals`.

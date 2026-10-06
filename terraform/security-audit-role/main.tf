@@ -153,6 +153,33 @@ data "aws_iam_policy_document" "supplemental_read_only" {
     resources = ["*"]
   }
 
+  # organizations:DescribeOrganization works from any member account (org id,
+  # management account id, feature set) - used to give the report context even
+  # when the next permission can't be exercised.
+  # iam:ListOrganizationsFeatures only succeeds from the Organizations
+  # management account or an account delegated as IAM's trusted administrator;
+  # from a plain member account it fails with
+  # AccountNotManagementOrDelegatedAdministrator, which collect_aws_data.py
+  # treats as expected, not an error. When it does succeed, it tells
+  # run_checks.py whether root credentials are centrally managed via AWS
+  # Organizations, so root_mfa_enabled/root_hardware_mfa/root_not_used_routinely
+  # aren't flagged as false positives for an account whose root credentials were
+  # deliberately deleted org-wide rather than just left unsecured. See
+  # skill/references/exceptions-and-exclusions.md.
+  # iam:ListEntitiesForPolicy lets the collector record which specific roles/users
+  # hold an admin-wildcard (Action:*, Resource:*) policy, so iam_no_full_admin_policy
+  # can flag the actual principal by name instead of just the policy, and a named
+  # break-glass/admin role can be excepted without hiding every other attachment.
+  statement {
+    sid = "OrganizationsRootAccessContext"
+    actions = [
+      "organizations:DescribeOrganization",
+      "iam:ListOrganizationsFeatures",
+      "iam:ListEntitiesForPolicy",
+    ]
+    resources = ["*"]
+  }
+
   statement {
     sid = "CodeStar"
     actions = [

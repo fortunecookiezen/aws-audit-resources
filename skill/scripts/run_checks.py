@@ -6,14 +6,30 @@ Usage:
     python3 run_checks.py snapshot.json --framework cis -o findings.json
     # --framework in {cis, well_architected, soc2, iso27001, all}
 
+    # To correct known false positives (a root user with credentials
+    # centrally removed via AWS Organizations, a named break-glass/admin
+    # role that is intentionally AdministratorAccess, a longer root-reuse
+    # review window) pass an exceptions file - see
+    # references/exceptions-and-exclusions.md for the schema:
+    python3 run_checks.py snapshot.json --framework cis --exceptions exceptions.json -o findings.json
+
 Reads the JSON produced by collect_aws_data.py (or an equivalent hand-built file
 matching its schema) and runs the 26 checks documented in
 references/check-catalog.md. Any check whose required snapshot data is missing
 is marked "skipped" rather than guessed at or silently dropped.
+
+Findings carry one of three statuses: "pass", "fail", or "accepted" - the last
+one only ever produced when an --exceptions file explicitly matches a finding
+(a centrally-managed root user, or a named admin principal on the accepted
+list). "accepted" findings are never silently dropped: they stay in the output
+with the evidence and the exception's own justification note attached, so the
+report can show them as deliberately risk-accepted rather than as open issues.
 """
 
 import argparse
+import inspect
 import json
+import re
 import sys
 from datetime import datetime, timezone
 
@@ -265,16 +281,83 @@ def _reference_now(snap):
     return datetime.now(timezone.utc)
 
 
+def load_exceptions(path):
+    """Load an --exceptions file. See references/exceptions-and-exclusions.md
+    for the schema. Returns {} if path is None."""
+    if not path:
+        return {}
+    with open(path) as f:
+        return json.load(f)
+
+
+def _root_centrally_managed(snap, exceptions):
+    """Is this account's root user credentials centrally managed via AWS
+    Organizations (deleted/disabled org-wide, not just locally hardened)?
+    Returns (is_managed: bool, evidence_note: str | None).
+
+    Two ways this can be true:
+      1. Auto-detected: collect_aws_data.py successfully called
+         iam:ListOrganizationsFeatures (only possible when it ran from the
+         Organizations management account or IAM's delegated administrator)
+         and RootCredentialsManagement was in the enabled-features list.
+      2. Attested: the person running the audit confirmed it out-of-band
+         (e.g. by checking from the management account) and recorded that in
+         --exceptions as root_credentials_centrally_managed.attested=true.
+    Auto-detection is preferred when both are present, since it's not relying
+    on an unverified human claim; attestation exists because most audits run
+    from inside the member account being audited, where the API genuinely
+    cannot be called (AccountNotManagementOrDelegatedAdministrator) and no
+    amount of re-trying will produce a different answer.
+    """
+    org = snap.get("organization") or {}
+    if org.get("root_credentials_management_queryable") and org.get("root_credentials_management_enabled") is True:
+        return True, (
+            f"Auto-detected via iam:ListOrganizationsFeatures (org {org.get('organization_id')}): "
+            "RootCredentialsManagement is enabled."
+        )
+    attestation = (exceptions or {}).get("root_credentials_centrally_managed") or {}
+    if attestation.get("attested") is True:
+        by = attestation.get("attested_by", "unspecified")
+        when = attestation.get("attested_date", "unspecified date")
+        note = attestation.get("note", "")
+        return True, f"Attested by {by} on {when} (not auto-verifiable from this account): {note}".rstrip(": ")
+    return False, None
+
+
+def _match_accepted_admin_principal(name, arn, exceptions):
+    """Check `name` (a role/user name) and `arn` against the
+    accepted_admin_principals list in --exceptions. Returns the matching
+    exception entry dict (with its "note") or None."""
+    for entry in (exceptions or {}).get("accepted_admin_principals", []):
+        pattern = entry.get("pattern")
+        if not pattern:
+            continue
+        match_field = name if entry.get("match", "name") == "name" else arn
+        if match_field and re.search(pattern, match_field):
+            return entry
+    return None
+
+
 # ---------------------------------------------------------------------------
 # Check functions. Each returns a list of {resource, status, evidence} dicts.
-# status is "pass" or "fail". An empty list (with no exception) is valid when
-# there's genuinely nothing to evaluate (e.g. no S3 buckets at all).
+# status is "pass", "fail", or "accepted" (only ever set when --exceptions
+# explicitly matches - see _root_centrally_managed / _match_accepted_admin_principal).
+# An empty list (with no exception) is valid when there's genuinely nothing to
+# evaluate (e.g. no S3 buckets at all).
 # ---------------------------------------------------------------------------
 
-def check_root_mfa_enabled(snap):
+def check_root_mfa_enabled(snap, exceptions=None):
     iam = snap.get("iam", {})
     if "root_mfa_enabled" not in iam:
         return None
+    managed, note = _root_centrally_managed(snap, exceptions)
+    if managed:
+        return [{
+            "resource": "root",
+            "status": "pass",
+            "evidence": f"AccountMFAEnabled={iam.get('account_summary', {}).get('AccountMFAEnabled')} - "
+                        f"root credentials are centrally managed, not self-managed with MFA. {note}",
+        }]
     enabled = iam["root_mfa_enabled"]
     return [{
         "resource": "root",
@@ -283,10 +366,17 @@ def check_root_mfa_enabled(snap):
     }]
 
 
-def check_root_hardware_mfa(snap):
+def check_root_hardware_mfa(snap, exceptions=None):
     iam = snap.get("iam", {})
     if "root_mfa_enabled" not in iam:
         return None
+    managed, note = _root_centrally_managed(snap, exceptions)
+    if managed:
+        return [{
+            "resource": "root",
+            "status": "pass",
+            "evidence": f"Root credentials are centrally managed; no locally-held MFA device to assess. {note}",
+        }]
     if not iam["root_mfa_enabled"]:
         return [{"resource": "root", "status": "fail", "evidence": "Root has no MFA device at all."}]
     has_virtual = iam.get("root_has_virtual_mfa")
@@ -299,19 +389,19 @@ def check_root_hardware_mfa(snap):
     }]
 
 
-def check_root_no_access_keys(snap):
+def check_root_no_access_keys(snap, exceptions=None):
     iam = snap.get("iam", {})
     if "root_access_keys_present" not in iam:
         return None
     present = iam["root_access_keys_present"]
-    return [{
-        "resource": "root",
-        "status": "fail" if present else "pass",
-        "evidence": f"AccountAccessKeysPresent={iam.get('account_summary', {}).get('AccountAccessKeysPresent')}",
-    }]
+    managed, note = _root_centrally_managed(snap, exceptions)
+    evidence = f"AccountAccessKeysPresent={iam.get('account_summary', {}).get('AccountAccessKeysPresent')}"
+    if managed:
+        evidence += f" - root credentials are centrally managed. {note}"
+    return [{"resource": "root", "status": "fail" if present else "pass", "evidence": evidence}]
 
 
-def check_root_not_used_routinely(snap):
+def check_root_not_used_routinely(snap, exceptions=None):
     iam = snap.get("iam", {})
     rows = iam.get("credential_report")
     if rows is None:
@@ -319,10 +409,41 @@ def check_root_not_used_routinely(snap):
     root_row = next((r for r in rows if r.get("user") == "<root_account>"), None)
     if root_row is None:
         return None
+
+    managed, note = _root_centrally_managed(snap, exceptions)
+    if managed:
+        return [{
+            "resource": "root",
+            "status": "pass",
+            "evidence": f"Root credentials are centrally managed; root cannot sign in to be used routinely. {note}",
+        }]
+
+    window_days = (exceptions or {}).get("root_routine_use_window_days", 365)
     last_used_fields = ["password_last_used", "access_key_1_last_used_date", "access_key_2_last_used_date"]
-    recent_values = [root_row.get(f) for f in last_used_fields if root_row.get(f) not in (None, "", "N/A", "not_supported")]
-    status = "fail" if recent_values else "pass"
-    evidence = f"Credential report root row activity fields: {', '.join(f'{f}={root_row.get(f)}' for f in last_used_fields)}"
+    now = _reference_now(snap)
+    recent = []
+    stale = []
+    for field in last_used_fields:
+        val = root_row.get(field)
+        if not val or val in ("N/A", "no_information", "not_supported"):
+            continue
+        try:
+            last_used = datetime.fromisoformat(val.replace("Z", "+00:00"))
+            age_days = (now - last_used).days
+        except ValueError:
+            continue
+        if age_days <= window_days:
+            recent.append(f"{field}={val} ({age_days}d ago)")
+        else:
+            stale.append(f"{field}={val} ({age_days}d ago)")
+
+    status = "fail" if recent else "pass"
+    if recent:
+        evidence = f"Used within the {window_days}-day review window: {', '.join(recent)}."
+    elif stale:
+        evidence = f"Only activity older than the {window_days}-day review window: {', '.join(stale)}. Not treated as routine use."
+    else:
+        evidence = "No root login or access-key activity recorded in the credential report."
     return [{"resource": "root", "status": status, "evidence": evidence}]
 
 
@@ -452,16 +573,85 @@ def check_iam_permissions_via_group_only(snap):
     } for u in users]
 
 
-def check_iam_no_full_admin_policy(snap):
+def check_iam_no_full_admin_policy(snap, exceptions=None):
+    """Flag every admin-wildcard (Action:* + Resource:*) policy attachment.
+
+    A policy is the resource for any snapshot collected before
+    collect_aws_data.py started recording who a policy is attached to
+    (attached_role_names/attached_user_names/attached_group_names) - that's
+    the pre-existing, conservative per-policy behavior, kept as a fallback so
+    older snapshots still evaluate the same way they always did.
+
+    Once attachment data is present, each attached role/user is its own
+    finding (naming who actually holds the policy, not just that the policy
+    exists), and is matched against --exceptions' accepted_admin_principals:
+    a match downgrades "fail" to "accepted" - still enumerated with full
+    evidence, never silently dropped - for principals like a named
+    OrganizationAccountAccessRole or a documented break-glass role where
+    full-admin access is a deliberate, reviewed decision rather than an
+    oversight.
+    """
     iam = snap.get("iam", {})
     policies = iam.get("policies")
     if policies is None:
         return None
-    return [{
-        "resource": p["policy_name"],
-        "status": "fail" if p.get("is_admin_wildcard") else "pass",
-        "evidence": f"arn={p['arn']}, is_admin_wildcard={p.get('is_admin_wildcard')}",
-    } for p in policies]
+
+    results = []
+    for p in policies:
+        if not p.get("is_admin_wildcard"):
+            results.append({
+                "resource": p["policy_name"],
+                "status": "pass",
+                "evidence": f"arn={p['arn']}, is_admin_wildcard=False",
+            })
+            continue
+
+        has_attachment_data = any(
+            k in p for k in ("attached_role_names", "attached_user_names", "attached_group_names")
+        )
+        if not has_attachment_data:
+            # Pre-upgrade snapshot: no record of who holds this policy.
+            results.append({
+                "resource": p["policy_name"],
+                "status": "fail",
+                "evidence": f"arn={p['arn']}, is_admin_wildcard=True",
+            })
+            continue
+
+        principals = (
+            [("role", n) for n in p.get("attached_role_names", [])]
+            + [("user", n) for n in p.get("attached_user_names", [])]
+            + [("group", n) for n in p.get("attached_group_names", [])]
+        )
+        if not principals:
+            # Admin-wildcard policy exists but is attached to nothing we could
+            # enumerate (e.g. attached only to a group we didn't resolve, or
+            # list_entities_for_policy failed) - still worth a finding on the
+            # policy itself so it isn't silently dropped.
+            results.append({
+                "resource": p["policy_name"],
+                "status": "fail",
+                "evidence": f"arn={p['arn']}, is_admin_wildcard=True, no attached principals could be enumerated",
+            })
+            continue
+
+        for kind, name in principals:
+            accepted = _match_accepted_admin_principal(name, p["arn"], exceptions)
+            resource = f"{p['policy_name']} → {kind}:{name}"
+            if accepted:
+                results.append({
+                    "resource": resource,
+                    "status": "accepted",
+                    "evidence": f"arn={p['arn']}. Accepted: {accepted.get('note', 'matches an accepted_admin_principals rule')} "
+                                f"(pattern: {accepted.get('pattern')}).",
+                })
+            else:
+                results.append({
+                    "resource": resource,
+                    "status": "fail",
+                    "evidence": f"arn={p['arn']}, is_admin_wildcard=True, attached directly to {kind} '{name}'.",
+                })
+    return results
 
 
 def check_iam_support_role_exists(snap):
@@ -672,7 +862,8 @@ CHECK_FUNCS = {
 }
 
 
-def run(snapshot, framework):
+def run(snapshot, framework, exceptions=None):
+    exceptions = exceptions or {}
     findings = []
     checks_evaluated = []
     checks_skipped = []
@@ -681,7 +872,12 @@ def run(snapshot, framework):
         if framework != "all" and framework not in meta["refs"]:
             continue
         func = CHECK_FUNCS[check_id]
-        results = func(snapshot)
+        # Only the handful of checks that actually use --exceptions declare
+        # the parameter; everything else keeps its original one-arg signature.
+        if "exceptions" in inspect.signature(func).parameters:
+            results = func(snapshot, exceptions=exceptions)
+        else:
+            results = func(snapshot)
         if results is None:
             checks_skipped.append(check_id)
             continue
@@ -701,6 +897,7 @@ def run(snapshot, framework):
 
     failed = [f for f in findings if f["status"] == "fail"]
     passed = [f for f in findings if f["status"] == "pass"]
+    accepted = [f for f in findings if f["status"] == "accepted"]
     by_severity = {}
     for f in failed:
         by_severity[f["severity"]] = by_severity.get(f["severity"], 0) + 1
@@ -712,9 +909,11 @@ def run(snapshot, framework):
         "total_findings": len(findings),
         "failed": len(failed),
         "passed": len(passed),
+        "accepted": len(accepted),
         "by_severity": by_severity,
         "checks_evaluated": checks_evaluated,
         "checks_skipped": checks_skipped,
+        "exceptions_applied": bool(exceptions),
     }
 
     return {"summary": summary, "findings": findings}
@@ -724,19 +923,24 @@ def main():
     parser = argparse.ArgumentParser(description="Evaluate an aws-audit snapshot against a compliance framework.")
     parser.add_argument("snapshot", help="path to the snapshot JSON produced by collect_aws_data.py")
     parser.add_argument("--framework", choices=sorted(FRAMEWORK_KEYS | {"all"}), default="cis")
+    parser.add_argument("--exceptions", help="path to an exceptions JSON file - see references/exceptions-and-exclusions.md")
     parser.add_argument("-o", "--output", default="findings.json")
     args = parser.parse_args()
 
     with open(args.snapshot) as f:
         snapshot = json.load(f)
 
-    result = run(snapshot, args.framework)
+    exceptions = load_exceptions(args.exceptions)
+
+    result = run(snapshot, args.framework, exceptions)
 
     with open(args.output, "w") as f:
         json.dump(result, f, indent=2, default=str)
 
+    accepted_count = result["summary"]["accepted"]
+    accepted_suffix = f" / {accepted_count} accepted" if accepted_count else ""
     print(
-        f"{result['summary']['failed']} failed / {result['summary']['passed']} passed "
+        f"{result['summary']['failed']} failed / {result['summary']['passed']} passed{accepted_suffix} "
         f"({len(result['summary']['checks_evaluated'])} checks evaluated, "
         f"{len(result['summary']['checks_skipped'])} skipped for missing data). "
         f"Wrote {args.output}",

@@ -38,9 +38,17 @@ This role incorporates the following AWS Managed permissions to allow access to 
 - `arn:aws:iam::aws:policy/SecurityAudit`
 - `arn:aws:iam::aws:policy/job-function/ViewOnlyAccess`
 
-It also grants a supplemental inline read-only policy (`SupplementalReadOnlyAccess`) covering services not fully captured by the managed policies above: notifications, IAM Access Analyzer, Service Discovery, GuardDuty/Macie/Shield/WAFv2/ECR describe-level access, CloudTrail, `sts:GetCallerIdentity`, CodeStar-family services, account/billing/cost visibility, and AI service usage auditing (Bedrock, Bedrock AgentCore, Q Business, Q Developer/CodeWhisperer).
+It also grants a supplemental inline read-only policy (`SupplementalReadOnlyAccess`) covering services not fully captured by the managed policies above: notifications, IAM Access Analyzer, Service Discovery, GuardDuty/Macie/Shield/WAFv2/ECR describe-level access, CloudTrail, `sts:GetCallerIdentity`, AWS Organizations/root-access context, CodeStar-family services, account/billing/cost visibility, and AI service usage auditing (Bedrock, Bedrock AgentCore, Q Business, Q Developer/CodeWhisperer).
 
 `sts:GetCallerIdentity` was added (`STSCallerIdentity` Sid, template version 3.1) to support the [`skill/`](../skill/SKILL.md) audit skill, whose collector script calls it first to verify the assumed role and resolve the account ID before collecting anything else — neither `SecurityAudit` nor `job-function/ViewOnlyAccess` covers this action.
+
+`organizations:DescribeOrganization`, `iam:ListOrganizationsFeatures`, and `iam:ListEntitiesForPolicy` were added (`OrganizationsRootAccessContext` Sid, template version 3.2) to support the same audit skill's handling of false positives on root-account and full-admin-policy findings:
+
+- `organizations:DescribeOrganization` works from any member account and tells the collector whether the account belongs to an organization at all (org ID, management account ID, feature set) — context the report can show even when the next permission can't be exercised.
+- `iam:ListOrganizationsFeatures` only succeeds when called from the Organizations **management account** or an account delegated as IAM's trusted administrator; from a plain member account it fails with `AccountNotManagementOrDelegatedAdministrator`, which the collector treats as expected rather than an error. When it does succeed, it tells the skill whether root credentials are centrally managed via AWS Organizations, so a root user with its credentials deliberately removed org-wide isn't flagged as if it were simply unsecured.
+- `iam:ListEntitiesForPolicy` lets the collector record which specific roles/users/groups hold each admin-wildcard (`Action:*`, `Resource:*`) policy, so the skill can flag the actual principal by name instead of just the policy, and a named break-glass/admin role can be excepted without hiding every other attachment.
+
+None of these three grant write access or let the role query any other account's data. See [`skill/references/exceptions-and-exclusions.md`](../skill/references/exceptions-and-exclusions.md) for how the skill uses this.
 
 ### Trust policy (security-audit-role)
 

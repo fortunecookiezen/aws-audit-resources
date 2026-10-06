@@ -27,7 +27,7 @@ The account data this skill evaluates can come from any of three sources. Pick w
 
 ### A. Live AWS access via the repo's CrossAccountSecurityAuditRole (preferred when available)
 
-This repo's `cloudformation/security-audit-role.yml` (or the equivalent `terraform/security-audit-role/` module) deploys a dedicated, read-only `<org_prefix>-CrossAccountSecurityAuditRole` into the target account specifically for this kind of review. It grants exactly four AWS-managed policies (`SecurityAudit`, `job-function/ViewOnlyAccess`, `AmazonInspector2ReadOnlyAccess`, `AWSSecurityHubReadOnlyAccess`) plus a narrow `SupplementalReadOnlyAccess` inline policy covering a handful of gaps those managed policies leave (notifications, IAM Access Analyzer, GuardDuty/Macie/Shield/WAFv2 describe-level access, CloudTrail's `ListEventDataStores`, billing/account contact visibility, and `sts:GetCallerIdentity`, which `collect_aws_data.py` calls first to verify the assumed role before collecting anything else). It does not grant write access to anything.
+This repo's `cloudformation/security-audit-role.yml` (or the equivalent `terraform/security-audit-role/` module) deploys a dedicated, read-only `<org_prefix>-CrossAccountSecurityAuditRole` into the target account specifically for this kind of review. It grants exactly four AWS-managed policies (`SecurityAudit`, `job-function/ViewOnlyAccess`, `AmazonInspector2ReadOnlyAccess`, `AWSSecurityHubReadOnlyAccess`) plus a narrow `SupplementalReadOnlyAccess` inline policy covering a handful of gaps those managed policies leave (notifications, IAM Access Analyzer, GuardDuty/Macie/Shield/WAFv2 describe-level access, CloudTrail's `ListEventDataStores`, billing/account contact visibility, `sts:GetCallerIdentity`, which `collect_aws_data.py` calls first to verify the assumed role before collecting anything else, and `organizations:DescribeOrganization`/`iam:ListOrganizationsFeatures`/`iam:ListEntitiesForPolicy` (`OrganizationsRootAccessContext` Sid), which let the collector detect AWS Organizations centralized root access management when run with the right privileges and enumerate which specific roles/users hold an admin-wildcard policy — see `references/exceptions-and-exclusions.md`). It does not grant write access to anything.
 
 1. **If the role isn't deployed in the target account yet**, deploy it first — either:
    - `aws cloudformation deploy --template-file ../cloudformation/security-audit-role.yml --stack-name security-audit-role --parameter-overrides PrincipalAccountId=<centralized-account-id> TrustedPrincipalArnPattern=<sso-permission-set-arn-pattern> Owner=<owner-email> --capabilities CAPABILITY_NAMED_IAM`, or
@@ -68,7 +68,15 @@ python3 scripts/run_checks.py ../audit-runs/<account_id>-<YYYYMMDD>/snapshot.jso
 # --framework ∈ {cis, well_architected, soc2, iso27001, all}
 ```
 
-This produces a findings list plus a summary (total findings, pass/fail counts, breakdown by severity, checks evaluated vs. skipped due to missing data). If a data source is partial (e.g., only an IAM credential report, no S3/CloudTrail/EC2 data), checks that can't be evaluated are marked skipped rather than guessed at — be honest in the report about what wasn't checked rather than implying full coverage.
+This produces a findings list plus a summary (total findings, pass/fail/accepted counts, breakdown by severity, checks evaluated vs. skipped due to missing data). If a data source is partial (e.g., only an IAM credential report, no S3/CloudTrail/EC2 data), checks that can't be evaluated are marked skipped rather than guessed at — be honest in the report about what wasn't checked rather than implying full coverage.
+
+A few checks (root MFA/access-keys/routine-use, full-admin IAM policies) can produce false positives that aren't visible from the collected data alone — a root user with credentials centrally removed via AWS Organizations, or a deliberately-named admin role. Before treating those findings as real issues, check whether `--exceptions ../audit-runs/<account_id>-<YYYYMMDD>/exceptions.json` applies; see `references/exceptions-and-exclusions.md` for the file format and what it does (and doesn't) auto-detect:
+
+```bash
+python3 scripts/run_checks.py ../audit-runs/<account_id>-<YYYYMMDD>/snapshot.json \
+  --framework cis --exceptions ../audit-runs/<account_id>-<YYYYMMDD>/exceptions.json \
+  -o ../audit-runs/<account_id>-<YYYYMMDD>/findings.json
+```
 
 ## Step 4: Build the report
 
@@ -76,9 +84,10 @@ Read the docx skill's SKILL.md, then build a Word document with this structure:
 
 1. **Executive Summary** — account(s) audited, framework, overall posture, headline numbers
 2. **Key Findings** — critical/high findings first, grouped by area
-3. **Passing Controls** — brief list, so the report isn't only bad news
-4. **Detailed Findings by Area** — one subsection per core area (IAM, MFA, S3, CloudTrail/Logging, Security Groups/VPC, Root Account), each finding with control reference(s) for the chosen framework, evidence, and remediation
-5. **Appendix: Scope & Methodology** — which six areas were in scope, which controls were evaluated vs. skipped (including the "manual/extended checks" list from `references/check-catalog.md`), data source used, and date of collection
+3. **Accepted Findings** (only if `--exceptions` was used and produced any) — findings with status `"accepted"`: the underlying fact, who accepted it and why (from the exceptions file's `note`), and the matching rule. Keep these visibly separate from both Key Findings and Passing Controls — they're neither an open issue nor a clean pass, they're a reviewed, deliberate acceptance.
+4. **Passing Controls** — brief list, so the report isn't only bad news
+5. **Detailed Findings by Area** — one subsection per core area (IAM, MFA, S3, CloudTrail/Logging, Security Groups/VPC, Root Account), each finding with control reference(s) for the chosen framework, evidence, and remediation
+6. **Appendix: Scope & Methodology** — which six areas were in scope, which controls were evaluated vs. skipped (including the "manual/extended checks" list from `references/check-catalog.md`), data source used, date of collection, and whether an exceptions file was applied (and if so, note its presence in the evidence package per Step 3)
 
 Write the report into the same `audit-runs/<account_id>-<YYYYMMDD>/` directory as the snapshot and findings — once the audit is complete, that whole directory is the evidence package. Follow `references/evidence-handling.md` for what to do with it next (a private evidence repo or an archive, never this repo).
 
@@ -90,8 +99,9 @@ Write the report into the same `audit-runs/<account_id>-<YYYYMMDD>/` directory a
 - `references/soc2-mapping.md` — SOC 2 Trust Services Criteria (CC6.x/CC7.x) mapping
 - `references/iso27001-mapping.md` — ISO/IEC 27001:2022 Annex A control mapping
 - `references/evidence-handling.md` — what to do with a completed audit's output: the `audit-runs/` convention, and the private-repo-or-archive lifecycle for real evidence
+- `references/exceptions-and-exclusions.md` — the `--exceptions` file format: correcting root-account findings for AWS Organizations centralized root access management, a configurable root-reuse review window, and marking named admin roles as a reviewed risk acceptance rather than an open finding
 
 ## Scripts
 
 - `scripts/collect_aws_data.py` — boto3 collector; supports `--profile`, `--role-arn`/`--role-session-name` (assume-role), `--regions`/`--all-regions`, `-o/--output`
-- `scripts/run_checks.py` — evaluates a snapshot against one framework; `snapshot.json --framework {cis|well_architected|soc2|iso27001|all} -o findings.json`
+- `scripts/run_checks.py` — evaluates a snapshot against one framework; `snapshot.json --framework {cis|well_architected|soc2|iso27001|all} [--exceptions exceptions.json] -o findings.json`
