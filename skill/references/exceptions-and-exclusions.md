@@ -1,6 +1,6 @@
 # Exceptions: handling known false positives
 
-A handful of the 26 automated checks can't tell the difference between "this
+A handful of the 27 automated checks can't tell the difference between "this
 is genuinely wrong" and "this is exactly what a well-run account looks like,"
 because the distinguishing fact isn't visible from the data `collect_aws_data.py`
 can gather on its own. Three concrete cases:

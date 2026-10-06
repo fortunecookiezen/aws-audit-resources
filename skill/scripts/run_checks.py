@@ -16,9 +16,17 @@ Usage:
     python3 run_checks.py snapshot.json --framework cis --exceptions exceptions.json -o findings.json
 
 Reads the JSON produced by collect_aws_data.py (or an equivalent hand-built file
-matching its schema) and runs the 26 checks documented in
+matching its schema) and runs the 27 checks documented in
 references/check-catalog.md. Any check whose required snapshot data is missing
 is marked "skipped" rather than guessed at or silently dropped.
+
+One of those 27 (default_vpc_exists) is best-practice-only: no CIS AWS
+Foundations Benchmark, SOC 2, or ISO 27001 control actually requires deleting
+a region's default VPC, so its "refs" for those three frameworks are an
+informational note rather than a control ID - see check-catalog.md's footnote
+and references/remediation-and-retesting.md's "Findings outside the audited
+framework's scope." It still runs and reports under every framework; it just
+doesn't masquerade as satisfying a control that doesn't exist.
 
 Findings carry one of three statuses: "pass", "fail", or "accepted" - the last
 one only ever produced when an --exceptions file explicitly matches a finding
@@ -235,6 +243,25 @@ CHECKS_META = {
         "severity": "Medium",
         "remediation": "aws ec2 modify-instance-metadata-options --http-tokens required --http-endpoint enabled; set this as the default for new launches.",
         "refs": {"cis": "6.7", "well_architected": "SEC05-BP02", "soc2": "CC6.1", "iso27001": "A.8.20"},
+    },
+    "default_vpc_exists": {
+        "title": "No unmanaged default VPC remains in this region",
+        "area": "Security Groups / VPC",
+        "severity": "Low",
+        "remediation": "If this default VPC is not in active, documented use: terminate/detach anything still attached to it, delete its default subnets and internet gateway, then `aws ec2 delete-vpc --vpc-id <vpc-id>` (AWS requires the VPC to be empty first - work bottom-up: ENIs/instances, then the IGW, then the subnets, then the VPC). If it IS intentionally retained and in use, document that decision rather than leaving it as an unreviewed, auto-created default - see references/remediation-and-retesting.md.",
+        # No CIS AWS Foundations Benchmark, SOC 2, or ISO 27001 control specifically
+        # requires deleting the default VPC - it's an AWS best practice (every default
+        # VPC ships with public subnets and an internet gateway pre-attached, which is
+        # the opposite of intentional network layering), not a framework control. Track
+        # it as informational for those three rather than fabricating a control ID; see
+        # check-catalog.md's footnote and remediation-and-retesting.md's "Findings
+        # outside the audited framework's scope."
+        "refs": {
+            "cis": "Not in CIS v7.0.0 scope (AWS best practice)",
+            "well_architected": "SEC05-BP01",
+            "soc2": "Not a TSC control (AWS best practice)",
+            "iso27001": "Not a specific Annex A control (AWS best practice)",
+        },
     },
 }
 
@@ -940,6 +967,26 @@ def check_ec2_imdsv2_required(snap):
     } for i in running]
 
 
+def check_default_vpc_exists(snap):
+    vpcs = snap.get("ec2", {}).get("vpcs")
+    if vpcs is None:
+        return None
+    # Each entry here is a VPC that actually exists in the account today. A
+    # region whose default VPC was already deleted simply has no entry for
+    # it - that's the passing state, not something to report "skipped" or
+    # synthesize a pass for; nothing to check means nothing to flag.
+    return [{
+        "resource": f"{v['vpc_id']} ({v['region']})",
+        "status": "fail" if v.get("is_default") else "pass",
+        "evidence": (
+            f"is_default={v.get('is_default', False)}; "
+            + ("this is the AWS auto-created default VPC for this region."
+               if v.get("is_default")
+               else "a custom (non-default) VPC.")
+        ),
+    } for v in vpcs]
+
+
 CHECK_FUNCS = {
     "root_mfa_enabled": check_root_mfa_enabled,
     "root_hardware_mfa": check_root_hardware_mfa,
@@ -967,6 +1014,7 @@ CHECK_FUNCS = {
     "sg_no_open_admin_ports_ipv6": check_sg_no_open_admin_ports_ipv6,
     "sg_default_restricts_traffic": check_sg_default_restricts_traffic,
     "ec2_imdsv2_required": check_ec2_imdsv2_required,
+    "default_vpc_exists": check_default_vpc_exists,
 }
 
 

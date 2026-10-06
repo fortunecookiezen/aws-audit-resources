@@ -93,9 +93,13 @@ Read the docx skill's SKILL.md, then build a Word document with this structure:
 
 Write the report into the same `audit-runs/<account_id>-<YYYYMMDD>/` directory as the snapshot and findings — once the audit is complete, that whole directory is the evidence package. Follow `references/evidence-handling.md` for what to do with it next (a private evidence repo or an archive, never this repo).
 
+## Step 5: Remediate and retest
+
+The audit doesn't end at the report. When findings get fixed, don't take anyone's word for it — re-collect fresh data and re-run the checks, and diff the new findings against the baseline rather than eyeballing the two summary counts (a fix and a regression can net out to the same pass/fail total). Full procedure, including when a full retest vs. a targeted one is appropriate and how to handle a finding that's real but doesn't map to the audited framework's controls, is in `references/remediation-and-retesting.md`. The mechanical diff itself is `scripts/diff_findings.py findings-baseline.json findings-retest.json`.
+
 ## Reference files
 
-- `references/check-catalog.md` — master table of all 26 automated checks with cross-framework control IDs; keep in lockstep with `run_checks.py`'s `CHECKS_META`/`CHECK_FUNCS` and `collect_aws_data.py`'s collectors when extending
+- `references/check-catalog.md` — master table of all 27 automated checks with cross-framework control IDs (including which checks are best-practice-only, with no control in a given framework); keep in lockstep with `run_checks.py`'s `CHECKS_META`/`CHECK_FUNCS` and `collect_aws_data.py`'s collectors when extending
 - `references/cis-aws-foundations.md` — full CIS AWS Foundations Benchmark v7.0.0 control reference (36 controls, six core areas)
 - `references/well-architected-security.md` — AWS Well-Architected Security Pillar (SEC01–SEC08) mapping
 - `references/soc2-mapping.md` — SOC 2 Trust Services Criteria (CC6.x/CC7.x) mapping
@@ -104,8 +108,10 @@ Write the report into the same `audit-runs/<account_id>-<YYYYMMDD>/` directory a
 - `references/exceptions-and-exclusions.md` — the `--exceptions` file format: correcting root-account findings for AWS Organizations centralized root access management, a configurable root-reuse review window, marking named admin roles as a reviewed risk acceptance rather than an open finding, and how a root-management claim gets corroborated against the actual data before it's applied
 - `references/accepting-findings-process.md` — the governance process behind the exceptions file: who can accept a finding, what evidence they need, how a claim/data contradiction gets investigated, and how accepted findings get reviewed over time
 - `references/documentation-request-template.md` — fill-in template to request known exceptions (admin roles, root-management status, other pre-reviewed risks) from the account/engagement owner before the audit runs
+- `references/remediation-and-retesting.md` — the procedure for after the report ships: tracking remediation, re-collecting and re-running checks, diffing findings instead of trusting summary counts, and handling a real finding that doesn't map to the audited framework's controls (e.g. a region's default VPC)
 
 ## Scripts
 
 - `scripts/collect_aws_data.py` — boto3 collector; supports `--profile`, `--role-arn`/`--role-session-name` (assume-role), `--regions`/`--all-regions`, `-o/--output`
 - `scripts/run_checks.py` — evaluates a snapshot against one framework; `snapshot.json --framework {cis|well_architected|soc2|iso27001|all} [--exceptions exceptions.json] -o findings.json`
+- `scripts/diff_findings.py` — compares a baseline and a retest findings.json per check/resource (not just summary counts) for the Step 5 remediation workflow; `findings-baseline.json findings-retest.json [-o diff.json]`

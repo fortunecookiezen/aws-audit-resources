@@ -30,10 +30,13 @@ Master list of the automated checks this skill runs. Each row maps one `check_id
 | `sg_no_open_admin_ports_ipv6` | SG/VPC | Critical | 6.4 | SEC05-BP02 | CC6.1, CC6.6 | A.8.20 |
 | `sg_default_restricts_traffic` | SG/VPC | Low | 6.5 | SEC05-BP01 | CC6.1 | A.8.20 |
 | `ec2_imdsv2_required` | SG/VPC | Medium | 6.7 | SEC05-BP02 | CC6.1 | A.8.20 |
+| `default_vpc_exists`² | SG/VPC | Low | — | SEC05-BP01 | — | — |
 
-26 checks total, all within the six core areas (IAM, MFA, S3, CloudTrail/logging, Security Groups/VPC, root account).
+27 checks total, all within the six core areas (IAM, MFA, S3, CloudTrail/logging, Security Groups/VPC, root account).
 
 ¹ Supports `--exceptions` — can resolve to `"pass"` (root checks, including `iam_credentials_unused_45d` for the root row only, via AWS Organizations centralized root access management) or `"accepted"` (`iam_no_full_admin_policy`, via a named admin-principal match) instead of `"fail"`. A root-management claim is only applied when it's corroborated by the actual collected data (no login profile, no access keys, no MFA device) — see `references/exceptions-and-exclusions.md`.
+
+² Best-practice-only check: no CIS AWS Foundations Benchmark v7.0.0, SOC 2, or ISO 27001 control specifically requires deleting a region's default VPC (the `—` cells above aren't missing data, they're "this framework doesn't have a control for this"). It still runs and is reported under every framework, with that absence stated plainly in the report rather than a fabricated control ID — see `references/remediation-and-retesting.md`, "Findings outside the audited framework's scope."
 
 ## Manual/extended checks (not automated in v1)
 
