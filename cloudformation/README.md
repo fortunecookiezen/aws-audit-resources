@@ -38,7 +38,9 @@ This role incorporates the following AWS Managed permissions to allow access to 
 - `arn:aws:iam::aws:policy/SecurityAudit`
 - `arn:aws:iam::aws:policy/job-function/ViewOnlyAccess`
 
-It also grants a supplemental inline read-only policy (`SupplementalReadOnlyAccess`) covering services not fully captured by the managed policies above: notifications, IAM Access Analyzer, Service Discovery, GuardDuty/Macie/Shield/WAFv2/ECR describe-level access, CloudTrail, CodeStar-family services, account/billing/cost visibility, and AI service usage auditing (Bedrock, Bedrock AgentCore, Q Business, Q Developer/CodeWhisperer).
+It also grants a supplemental inline read-only policy (`SupplementalReadOnlyAccess`) covering services not fully captured by the managed policies above: notifications, IAM Access Analyzer, Service Discovery, GuardDuty/Macie/Shield/WAFv2/ECR describe-level access, CloudTrail, `sts:GetCallerIdentity`, CodeStar-family services, account/billing/cost visibility, and AI service usage auditing (Bedrock, Bedrock AgentCore, Q Business, Q Developer/CodeWhisperer).
+
+`sts:GetCallerIdentity` was added (`STSCallerIdentity` Sid, template version 3.1) to support the [`skill/`](../skill/SKILL.md) audit skill, whose collector script calls it first to verify the assumed role and resolve the account ID before collecting anything else — neither `SecurityAudit` nor `job-function/ViewOnlyAccess` covers this action.
 
 ### Trust policy (security-audit-role)
 
@@ -97,6 +99,10 @@ Set **`EnableUnusedAccessAnalyzer`** to `"true"` to also create an `ORGANIZATION
 
 > [!WARNING]
 > The unused access analyzer is a paid feature, billed monthly per IAM role and IAM user analyzed across all member accounts, for each unused access analyzer you create. Estimate the cost with the [IAM Access Analyzer pricing page](https://aws.amazon.com/iam/access-analyzer/pricing/) before enabling it. IAM is global, so enable it in only one region: turning it on in every region where you deploy this stack multiplies the charge without adding findings.
+
+## Using this role with the audit skill
+
+The [`skill/`](../skill/SKILL.md) directory at the repo root is a Claude skill that runs an AWS account security audit (against CIS, Well-Architected, SOC 2, or ISO/IEC 27001) using the role deployed by this template as its live-data access path. See `skill/SKILL.md` Step 2 for the full assume-role-and-collect workflow.
 
 ## Other templates
 

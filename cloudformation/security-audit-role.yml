@@ -2,9 +2,9 @@ AWSTemplateFormatVersion: '2010-09-09'
 Description: >
   'Creates a role that authorizes cross-account access from one aws account to a security audit role in another account.
   Grants access to the ViewOnlyAccess and SecurityAudit managed job functions in the target account. Deploy only in a single region.
-  Last updated at 2026-08-23 by phillips.james@gmail.com'
+  Last updated at 2026-10-06 by phillips.james@gmail.com'
 Metadata:
-  Version: 3.0
+  Version: "3.1"
 Parameters:
   Contact:
     Type: String
@@ -161,6 +161,11 @@ Resources:
                 - cloudtrail:ListEventDataStores
                 Resource: "*"
                 Sid: CloudTrail
+              - Effect: Allow
+                Action:
+                - sts:GetCallerIdentity
+                Resource: "*"
+                Sid: STSCallerIdentity
               - Effect: Allow
                 Action:
                 - codeartifact:Describe*

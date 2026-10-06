@@ -1,0 +1,90 @@
+---
+name: aws-audit
+description: Audits an AWS account's security configuration against CIS AWS Foundations Benchmark, AWS Well-Architected Security Pillar, SOC 2, or ISO/IEC 27001, and produces a Word document report. Use when the user asks to audit, assess, or review AWS account security — including requests mentioning CIS, Well-Architected, SOC2/SOC 2, ISO27001/ISO 27001, IAM hygiene, root account/MFA, S3 public access, CloudTrail/logging, or security group exposure.
+---
+
+# AWS Account Security Audit
+
+Audits the six core technical areas of an AWS account's security posture — IAM, MFA, S3 bucket security, CloudTrail/logging, Security Groups/VPC exposure, and root account protections — against one compliance framework at a time, and produces a Word document report of findings.
+
+This skill lives inside the `aws-audit-resources` repository, alongside the IAM role templates (`cloudformation/`, `terraform/`) that provide the actual cross-account access the live-data path below uses. If you are working inside a checkout of that repo, the role templates referenced in Step 2 are at `../cloudformation/security-audit-role.yml` and `../terraform/security-audit-role/` relative to this skill directory.
+
+## Step 1: Confirm framework and scope
+
+Ask the user which framework to audit against if not already specified:
+- **CIS** — CIS AWS Foundations Benchmark v7.0.0 (default if the user doesn't specify)
+- **Well-Architected** — AWS Well-Architected Framework, Security Pillar
+- **SOC2** — SOC 2 Trust Services Criteria (Common Criteria / Security category)
+- **ISO27001** — ISO/IEC 27001:2022 Annex A
+
+Confirm the scope is the six core areas listed above. This skill does not audit RDS, EFS, EBS, KMS-general, AWS Config, AWS Organizations governance, Security Hub/GuardDuty enablement, or other services outside those six areas — if the user wants broader coverage, note that it's out of scope for this version rather than guessing at checks that don't exist yet.
+
+## Step 2: Get the account data
+
+The account data this skill evaluates can come from any of three sources. Pick whichever the user has available.
+
+### A. Live AWS access via the repo's CrossAccountSecurityAuditRole (preferred when available)
+
+This repo's `cloudformation/security-audit-role.yml` (or the equivalent `terraform/security-audit-role/` module) deploys a dedicated, read-only `<org_prefix>-CrossAccountSecurityAuditRole` into the target account specifically for this kind of review. It grants exactly four AWS-managed policies (`SecurityAudit`, `job-function/ViewOnlyAccess`, `AmazonInspector2ReadOnlyAccess`, `AWSSecurityHubReadOnlyAccess`) plus a narrow `SupplementalReadOnlyAccess` inline policy covering a handful of gaps those managed policies leave (notifications, IAM Access Analyzer, GuardDuty/Macie/Shield/WAFv2 describe-level access, CloudTrail's `ListEventDataStores`, billing/account contact visibility, and `sts:GetCallerIdentity`, which `collect_aws_data.py` calls first to verify the assumed role before collecting anything else). It does not grant write access to anything.
+
+1. **If the role isn't deployed in the target account yet**, deploy it first — either:
+   - `aws cloudformation deploy --template-file ../cloudformation/security-audit-role.yml --stack-name security-audit-role --parameter-overrides PrincipalAccountId=<centralized-account-id> TrustedPrincipalArnPattern=<sso-permission-set-arn-pattern> Owner=<owner-email> --capabilities CAPABILITY_NAMED_IAM`, or
+   - the equivalent `terraform/security-audit-role/` module (see `terraform/README.md` for the module-call example).
+
+   `RequireMFA` should stay `false` if the auditor signs in through IAM Identity Center (SSO) — Identity Center sessions never carry `aws:MultiFactorAuthPresent`, so `true` would lock every SSO user out of the role. See `cloudformation/README.md` for the full trust-policy rationale.
+
+2. **Assume the role** from a session already authenticated in the trusted/centralized account (matching the pattern in `scripts/README.md`):
+   ```bash
+   export AUDIT_ROLE_ARN="arn:aws:iam::<target-account-id>:role/<org_prefix>-CrossAccountSecurityAuditRole"
+   eval $(aws sts assume-role --role-arn $AUDIT_ROLE_ARN \
+     --role-session-name audit-session | jq -r '.Credentials | "export AWS_ACCESS_KEY_ID=\(.AccessKeyId)\nexport AWS_SECRET_ACCESS_KEY=\(.SecretAccessKey)\nexport AWS_SESSION_TOKEN=\(.SessionToken)\n"')
+   ```
+   Alternatively, pass `--role-arn` directly to `collect_aws_data.py` (see below) and let it assume the role itself via `boto3.client('sts').assume_role(...)` rather than exporting credentials into the shell.
+
+3. **Run the collector:**
+   ```bash
+   pip install boto3 --break-system-packages
+   python3 scripts/collect_aws_data.py --all-regions -o snapshot.json
+   # or, to have the script assume the role itself instead of pre-exporting credentials:
+   python3 scripts/collect_aws_data.py --all-regions --role-arn $AUDIT_ROLE_ARN -o snapshot.json
+   ```
+
+### B. Exported files
+
+If the user has already exported account configuration (from the AWS console, Config, or another tool), build a JSON file matching `collect_aws_data.py`'s output schema by hand — see the script's docstring and the field names referenced throughout `references/check-catalog.md` for what each check expects.
+
+### C. AWS connector/MCP
+
+If an AWS MCP connector is available in this session, use it to gather the equivalent data points (IAM credential report, account summary, S3 public-access-block settings, CloudTrail trail configuration, security groups, EC2 instance metadata options) and assemble them into the same JSON schema before proceeding to Step 3.
+
+## Step 3: Run the checks
+
+```bash
+python3 scripts/run_checks.py snapshot.json --framework cis -o findings.json
+# --framework ∈ {cis, well_architected, soc2, iso27001, all}
+```
+
+This produces a findings list plus a summary (total findings, pass/fail counts, breakdown by severity, checks evaluated vs. skipped due to missing data). If a data source is partial (e.g., only an IAM credential report, no S3/CloudTrail/EC2 data), checks that can't be evaluated are marked skipped rather than guessed at — be honest in the report about what wasn't checked rather than implying full coverage.
+
+## Step 4: Build the report
+
+Read the docx skill's SKILL.md, then build a Word document with this structure:
+
+1. **Executive Summary** — account(s) audited, framework, overall posture, headline numbers
+2. **Key Findings** — critical/high findings first, grouped by area
+3. **Passing Controls** — brief list, so the report isn't only bad news
+4. **Detailed Findings by Area** — one subsection per core area (IAM, MFA, S3, CloudTrail/Logging, Security Groups/VPC, Root Account), each finding with control reference(s) for the chosen framework, evidence, and remediation
+5. **Appendix: Scope & Methodology** — which six areas were in scope, which controls were evaluated vs. skipped (including the "manual/extended checks" list from `references/check-catalog.md`), data source used, and date of collection
+
+## Reference files
+
+- `references/check-catalog.md` — master table of all 26 automated checks with cross-framework control IDs; keep in lockstep with `run_checks.py`'s `CHECKS_META`/`CHECK_FUNCS` and `collect_aws_data.py`'s collectors when extending
+- `references/cis-aws-foundations.md` — full CIS AWS Foundations Benchmark v7.0.0 control reference (36 controls, six core areas)
+- `references/well-architected-security.md` — AWS Well-Architected Security Pillar (SEC01–SEC08) mapping
+- `references/soc2-mapping.md` — SOC 2 Trust Services Criteria (CC6.x/CC7.x) mapping
+- `references/iso27001-mapping.md` — ISO/IEC 27001:2022 Annex A control mapping
+
+## Scripts
+
+- `scripts/collect_aws_data.py` — boto3 collector; supports `--profile`, `--role-arn`/`--role-session-name` (assume-role), `--regions`/`--all-regions`, `-o/--output`
+- `scripts/run_checks.py` — evaluates a snapshot against one framework; `snapshot.json --framework {cis|well_architected|soc2|iso27001|all} -o findings.json`
