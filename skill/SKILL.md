@@ -9,6 +9,8 @@ Audits the six core technical areas of an AWS account's security posture — IAM
 
 This skill lives inside the `aws-audit-resources` repository, alongside the IAM role templates (`cloudformation/`, `terraform/`) that provide the actual cross-account access the live-data path below uses. If you are working inside a checkout of that repo, the role templates referenced in Step 2 are at `../cloudformation/security-audit-role.yml` and `../terraform/security-audit-role/` relative to this skill directory.
 
+**Before collecting any real account data**, create a per-engagement working directory at the repo root — `audit-runs/<account_id>-<YYYYMMDD>/` (e.g. `../audit-runs/111122223333-20261006/` relative to this skill directory) — and write the snapshot, findings, and report there, not into the repo's tracked directories. That path is covered by this repo's `.gitignore` for exactly this reason. See `references/evidence-handling.md` for the full clone → audit → evidence → private-repo-or-archive lifecycle, including what to do with the working directory once the audit is done. Fixture data under `skill/evals/` is synthetic and exempt from this — it's checked in deliberately, see `evals/fixtures/README.md`.
+
 ## Step 1: Confirm framework and scope
 
 Ask the user which framework to audit against if not already specified:
@@ -41,12 +43,13 @@ This repo's `cloudformation/security-audit-role.yml` (or the equivalent `terrafo
    ```
    Alternatively, pass `--role-arn` directly to `collect_aws_data.py` (see below) and let it assume the role itself via `boto3.client('sts').assume_role(...)` rather than exporting credentials into the shell.
 
-3. **Run the collector:**
+3. **Run the collector, writing into the engagement's `audit-runs/` directory:**
    ```bash
    pip install boto3 --break-system-packages
-   python3 scripts/collect_aws_data.py --all-regions -o snapshot.json
+   mkdir -p ../audit-runs/<account_id>-<YYYYMMDD>
+   python3 scripts/collect_aws_data.py --all-regions -o ../audit-runs/<account_id>-<YYYYMMDD>/snapshot.json
    # or, to have the script assume the role itself instead of pre-exporting credentials:
-   python3 scripts/collect_aws_data.py --all-regions --role-arn $AUDIT_ROLE_ARN -o snapshot.json
+   python3 scripts/collect_aws_data.py --all-regions --role-arn $AUDIT_ROLE_ARN -o ../audit-runs/<account_id>-<YYYYMMDD>/snapshot.json
    ```
 
 ### B. Exported files
@@ -60,7 +63,8 @@ If an AWS MCP connector is available in this session, use it to gather the equiv
 ## Step 3: Run the checks
 
 ```bash
-python3 scripts/run_checks.py snapshot.json --framework cis -o findings.json
+python3 scripts/run_checks.py ../audit-runs/<account_id>-<YYYYMMDD>/snapshot.json \
+  --framework cis -o ../audit-runs/<account_id>-<YYYYMMDD>/findings.json
 # --framework ∈ {cis, well_architected, soc2, iso27001, all}
 ```
 
@@ -76,6 +80,8 @@ Read the docx skill's SKILL.md, then build a Word document with this structure:
 4. **Detailed Findings by Area** — one subsection per core area (IAM, MFA, S3, CloudTrail/Logging, Security Groups/VPC, Root Account), each finding with control reference(s) for the chosen framework, evidence, and remediation
 5. **Appendix: Scope & Methodology** — which six areas were in scope, which controls were evaluated vs. skipped (including the "manual/extended checks" list from `references/check-catalog.md`), data source used, and date of collection
 
+Write the report into the same `audit-runs/<account_id>-<YYYYMMDD>/` directory as the snapshot and findings — once the audit is complete, that whole directory is the evidence package. Follow `references/evidence-handling.md` for what to do with it next (a private evidence repo or an archive, never this repo).
+
 ## Reference files
 
 - `references/check-catalog.md` — master table of all 26 automated checks with cross-framework control IDs; keep in lockstep with `run_checks.py`'s `CHECKS_META`/`CHECK_FUNCS` and `collect_aws_data.py`'s collectors when extending
@@ -83,6 +89,7 @@ Read the docx skill's SKILL.md, then build a Word document with this structure:
 - `references/well-architected-security.md` — AWS Well-Architected Security Pillar (SEC01–SEC08) mapping
 - `references/soc2-mapping.md` — SOC 2 Trust Services Criteria (CC6.x/CC7.x) mapping
 - `references/iso27001-mapping.md` — ISO/IEC 27001:2022 Annex A control mapping
+- `references/evidence-handling.md` — what to do with a completed audit's output: the `audit-runs/` convention, and the private-repo-or-archive lifecycle for real evidence
 
 ## Scripts
 
