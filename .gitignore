@@ -1,6 +1,9 @@
 # Local .terraform directories
 **/.terraform/*
 
+# Provider lock files for the reusable modules in terraform/ - each user picks their own provider version
+terraform/**/.terraform.lock.hcl
+
 # .tfstate files
 *.tfstate
 *.tfstate.*
@@ -32,3 +35,10 @@ override.tf.json
 # Ignore CLI configuration files
 .terraformrc
 terraform.rc
+
+# Per-engagement audit evidence (real account snapshots, findings, reports).
+# This repo is public/shared tooling - a specific audit run's output never
+# belongs in its history. Run audits into audit-runs/<account_id>-<date>/ and
+# commit the result to a separate private evidence repo or an archive instead.
+# See skill/references/evidence-handling.md for the full workflow.
+/audit-runs/

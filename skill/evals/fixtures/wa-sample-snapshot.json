@@ -1,0 +1,89 @@
+{
+  "collected_at": "2026-08-20T14:00:00+00:00",
+  "account_id": "444455556666",
+  "caller_arn": "arn:aws:sts::444455556666:assumed-role/opspath-CrossAccountSecurityAuditRole/audit-session",
+  "regions": ["us-east-1"],
+  "iam": {
+    "password_policy": {"MinimumPasswordLength": 16, "PasswordReusePrevention": 24},
+    "account_summary": {"AccountMFAEnabled": 1, "AccountAccessKeysPresent": 0},
+    "root_mfa_enabled": true,
+    "root_access_keys_present": false,
+    "root_has_virtual_mfa": true,
+    "credential_report": [
+      {"user": "<root_account>", "password_enabled": "true", "password_last_used": "N/A", "mfa_active": "true", "access_key_1_active": "false"},
+      {"user": "alice", "password_enabled": "true", "password_last_used": "2026-08-19T00:00:00+00:00", "mfa_active": "true", "access_key_1_active": "false"},
+      {"user": "legacy-svc", "password_enabled": "false", "mfa_active": "false", "access_key_1_active": "true", "access_key_1_last_rotated": "2026-01-01T00:00:00+00:00", "access_key_1_last_used_date": "2026-08-15T00:00:00+00:00"}
+    ],
+    "users": [
+      {"user_name": "alice", "attached_managed_policies": [], "inline_policy_names": [], "has_direct_attachment": false, "group_names": ["admins"]},
+      {"user_name": "legacy-svc", "attached_managed_policies": ["PowerUserAccess"], "inline_policy_names": [], "has_direct_attachment": true, "group_names": []}
+    ],
+    "policies": [
+      {"policy_name": "PowerUserAccess", "arn": "arn:aws:iam::aws:policy/PowerUserAccess", "is_aws_managed": true, "is_admin_wildcard": false}
+    ],
+    "support_role_exists": true
+  },
+  "s3": {
+    "account_public_access_block": {"BlockPublicAcls": true, "IgnorePublicAcls": true, "BlockPublicPolicy": true, "RestrictPublicBuckets": true},
+    "buckets": [
+      {
+        "name": "fourfive-data",
+        "public_access_block": {"BlockPublicAcls": true, "IgnorePublicAcls": true, "BlockPublicPolicy": true, "RestrictPublicBuckets": true},
+        "bucket_policy_present": true,
+        "has_https_only_deny": true,
+        "versioning_status": "Enabled",
+        "mfa_delete": "Enabled",
+        "logging_enabled": true
+      }
+    ]
+  },
+  "cloudtrail": {
+    "trails": [
+      {
+        "name": "org-trail",
+        "trail_arn": "arn:aws:cloudtrail:us-east-1:444455556666:trail/org-trail",
+        "is_multi_region_trail": true,
+        "is_logging": true,
+        "log_file_validation_enabled": true,
+        "kms_key_id": "arn:aws:kms:us-east-1:444455556666:key/abcd-1234",
+        "s3_bucket_name": "fourfive-cloudtrail-logs",
+        "s3_bucket_access_logging_enabled": true,
+        "event_selectors": [{"ReadWriteType": "All", "IncludeManagementEvents": true, "DataResources": []}],
+        "advanced_event_selectors": []
+      }
+    ]
+  },
+  "ec2": {
+    "vpcs": [{"region": "us-east-1", "vpc_id": "vpc-0fourfive", "is_default": false}],
+    "flow_logs": [
+      {"region": "us-east-1", "resource_id": "vpc-0fourfive", "traffic_type": "ALL", "flow_log_status": "ACTIVE"}
+    ],
+    "security_groups": [
+      {
+        "region": "us-east-1",
+        "group_id": "sg-0app9999",
+        "group_name": "app-sg",
+        "vpc_id": "vpc-0fourfive",
+        "ip_permissions": [
+          {"IpProtocol": "tcp", "FromPort": 3389, "ToPort": 3389, "Ipv6Ranges": [{"CidrIpv6": "::/0"}]}
+        ],
+        "ip_permissions_egress": [{"IpProtocol": "-1"}]
+      },
+      {
+        "region": "us-east-1",
+        "group_id": "sg-0default2",
+        "group_name": "default",
+        "vpc_id": "vpc-0fourfive",
+        "ip_permissions": [],
+        "ip_permissions_egress": []
+      }
+    ],
+    "instances": [
+      {"region": "us-east-1", "instance_id": "i-0fourfiveapp01", "state": "running", "http_tokens": "required"}
+    ]
+  },
+  "account_contacts": {
+    "primary_contact": {"FullName": "FourFive Ops", "PhoneNumber": "+15555550200"},
+    "security_contact": {"Name": "Security Team", "EmailAddress": "security@fourfive.example"}
+  }
+}

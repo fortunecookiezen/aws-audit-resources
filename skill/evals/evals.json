@@ -1,0 +1,51 @@
+{
+  "evals": [
+    {
+      "id": 0,
+      "prompt": "Audit our AWS account (111122223333) against the CIS AWS Foundations Benchmark. I've exported the account configuration to a JSON file matching your collector's schema — it's attached as fixtures/sample-snapshot.json. Please give me a Word document report of the findings.",
+      "files": ["fixtures/sample-snapshot.json"],
+      "expected_output": "A .docx report auditing the six core areas against CIS AWS Foundations Benchmark v7.0.0, with an executive summary, key findings ordered by severity (root MFA disabled and S3 public bucket as critical findings), a passing-controls section, detailed findings by area with CIS control IDs and remediation, and a scope/methodology appendix noting which controls were evaluated vs. skipped.",
+      "expectations": [
+        {"text": "Report identifies that the root account has no MFA enabled as a critical/high-severity finding"},
+        {"text": "Report identifies that the root account has an active access key as a finding"},
+        {"text": "Report identifies the S3 bucket acme-public-assets as publicly accessible / failing Block Public Access"},
+        {"text": "Report identifies the IAM user bob as having AdministratorAccess attached directly (not via a group)"},
+        {"text": "Report identifies security group sg-0web1234 as allowing SSH (port 22) from 0.0.0.0/0"},
+        {"text": "Report identifies the CloudTrail trail as single-region rather than multi-region"},
+        {"text": "Report cites specific CIS AWS Foundations Benchmark control IDs (e.g. 2.5, 2.4, 3.1.4, 6.3) next to findings"},
+        {"text": "Report includes a methodology/scope section describing the six audited areas"},
+        {"text": "Output is delivered as a .docx file"}
+      ]
+    },
+    {
+      "id": 1,
+      "prompt": "Can you run a Well-Architected security review on this AWS account? Data is in fixtures/wa-sample-snapshot.json. This account is in pretty good shape so I mostly want to confirm there's nothing I'm missing, but give me the full report as a Word doc.",
+      "files": ["fixtures/wa-sample-snapshot.json"],
+      "expected_output": "A .docx report auditing the six core areas against the AWS Well-Architected Framework Security Pillar, correctly reflecting that most controls pass, while still surfacing the account's real remaining gaps (an RDP-open-to-::/0 security group, a stale/unrotated access key with a directly-attached PowerUserAccess policy on IAM user legacy-svc, and root MFA being virtual rather than hardware), each referenced to the relevant SEC0x-BPyy best practice.",
+      "expectations": [
+        {"text": "Report identifies security group sg-0app9999 as allowing RDP (port 3389) from ::/0 (IPv6)"},
+        {"text": "Report identifies IAM user legacy-svc as having an access key older than 90 days / not rotated"},
+        {"text": "Report identifies IAM user legacy-svc as having PowerUserAccess attached directly rather than through a group"},
+        {"text": "Report identifies root account MFA as virtual rather than hardware (Level 2 gap)"},
+        {"text": "Report correctly shows the account's other controls (e.g. S3 public access block, CloudTrail multi-region+KMS+validation) as passing rather than failing"},
+        {"text": "Report cites Well-Architected SEC0x-BPyy identifiers next to findings (e.g. SEC05-BP02, SEC02-BP05, SEC01-BP02)"},
+        {"text": "Output is delivered as a .docx file"}
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "We only have partial data for this account right now — just an IAM credential report CSV (fixtures/partial-iam-credential-report.csv), nothing on S3, CloudTrail, or security groups yet. Can you still audit against SOC 2 with what we have, and be clear about what you couldn't check?",
+      "files": ["fixtures/partial-iam-credential-report.csv"],
+      "expected_output": "A .docx report that evaluates only the IAM/MFA-related SOC 2 checks the credential report supports, explicitly states in the scope/methodology section that S3, CloudTrail, and Security Group/VPC areas could not be evaluated due to missing data, and does not fabricate findings for the unevaluated areas.",
+      "expectations": [
+        {"text": "Report evaluates IAM/credential-related findings (e.g. MFA status, password/key age) for users dana, marcus, and old-contractor from the credential report"},
+        {"text": "Report explicitly states that S3 bucket security could not be evaluated due to missing data"},
+        {"text": "Report explicitly states that CloudTrail/logging could not be evaluated due to missing data"},
+        {"text": "Report explicitly states that Security Groups/VPC could not be evaluated due to missing data"},
+        {"text": "Report does not present fabricated or guessed findings for S3, CloudTrail, or Security Groups/VPC"},
+        {"text": "Report cites SOC 2 Common Criteria IDs (e.g. CC6.1, CC6.2, CC6.3, CC6.6) next to the IAM/MFA findings it does make"},
+        {"text": "Output is delivered as a .docx file"}
+      ]
+    }
+  ]
+}

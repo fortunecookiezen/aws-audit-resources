@@ -1,0 +1,97 @@
+{
+  "collected_at": "2026-08-20T14:00:00+00:00",
+  "account_id": "111122223333",
+  "caller_arn": "arn:aws:sts::111122223333:assumed-role/opspath-CrossAccountSecurityAuditRole/audit-session",
+  "regions": ["us-east-1"],
+  "iam": {
+    "password_policy": {"MinimumPasswordLength": 8, "PasswordReusePrevention": 0},
+    "account_summary": {"AccountMFAEnabled": 0, "AccountAccessKeysPresent": 1},
+    "root_mfa_enabled": false,
+    "root_access_keys_present": true,
+    "root_has_virtual_mfa": false,
+    "credential_report": [
+      {"user": "<root_account>", "password_enabled": "true", "password_last_used": "2026-08-15T00:00:00+00:00", "mfa_active": "false", "access_key_1_active": "true", "access_key_1_last_rotated": "2025-01-01T00:00:00+00:00", "access_key_1_last_used_date": "2026-08-10T00:00:00+00:00"},
+      {"user": "bob", "password_enabled": "true", "password_last_used": "2026-08-19T00:00:00+00:00", "mfa_active": "false", "access_key_1_active": "false"},
+      {"user": "ci-deploy", "password_enabled": "false", "mfa_active": "false", "access_key_1_active": "true", "access_key_1_last_rotated": "2026-07-01T00:00:00+00:00", "access_key_1_last_used_date": "2026-08-18T00:00:00+00:00"}
+    ],
+    "users": [
+      {"user_name": "bob", "attached_managed_policies": ["AdministratorAccess"], "inline_policy_names": [], "has_direct_attachment": true, "group_names": []},
+      {"user_name": "ci-deploy", "attached_managed_policies": [], "inline_policy_names": ["ci-deploy-inline-policy"], "has_direct_attachment": true, "group_names": []}
+    ],
+    "policies": [
+      {"policy_name": "AdministratorAccess", "arn": "arn:aws:iam::aws:policy/AdministratorAccess", "is_aws_managed": true, "is_admin_wildcard": true}
+    ],
+    "support_role_exists": false
+  },
+  "s3": {
+    "account_public_access_block": {"BlockPublicAcls": false, "IgnorePublicAcls": false, "BlockPublicPolicy": false, "RestrictPublicBuckets": false},
+    "buckets": [
+      {
+        "name": "acme-public-assets",
+        "public_access_block": {"BlockPublicAcls": false, "IgnorePublicAcls": false, "BlockPublicPolicy": false, "RestrictPublicBuckets": false},
+        "bucket_policy_present": true,
+        "has_https_only_deny": false,
+        "versioning_status": null,
+        "mfa_delete": null,
+        "logging_enabled": false
+      },
+      {
+        "name": "acme-customer-data",
+        "public_access_block": {"BlockPublicAcls": true, "IgnorePublicAcls": true, "BlockPublicPolicy": true, "RestrictPublicBuckets": true},
+        "bucket_policy_present": true,
+        "has_https_only_deny": false,
+        "versioning_status": "Enabled",
+        "mfa_delete": "Disabled",
+        "logging_enabled": true
+      }
+    ]
+  },
+  "cloudtrail": {
+    "trails": [
+      {
+        "name": "acme-trail",
+        "trail_arn": "arn:aws:cloudtrail:us-east-1:111122223333:trail/acme-trail",
+        "is_multi_region_trail": false,
+        "is_logging": true,
+        "log_file_validation_enabled": true,
+        "kms_key_id": null,
+        "s3_bucket_name": "acme-cloudtrail-logs",
+        "s3_bucket_access_logging_enabled": false,
+        "event_selectors": [{"ReadWriteType": "All", "IncludeManagementEvents": true, "DataResources": []}],
+        "advanced_event_selectors": []
+      }
+    ]
+  },
+  "ec2": {
+    "vpcs": [{"region": "us-east-1", "vpc_id": "vpc-0acme1", "is_default": false}],
+    "flow_logs": [],
+    "security_groups": [
+      {
+        "region": "us-east-1",
+        "group_id": "sg-0web1234",
+        "group_name": "web-sg",
+        "vpc_id": "vpc-0acme1",
+        "ip_permissions": [
+          {"IpProtocol": "tcp", "FromPort": 22, "ToPort": 22, "IpRanges": [{"CidrIp": "0.0.0.0/0"}]},
+          {"IpProtocol": "tcp", "FromPort": 443, "ToPort": 443, "IpRanges": [{"CidrIp": "0.0.0.0/0"}]}
+        ],
+        "ip_permissions_egress": [{"IpProtocol": "-1"}]
+      },
+      {
+        "region": "us-east-1",
+        "group_id": "sg-0default1",
+        "group_name": "default",
+        "vpc_id": "vpc-0acme1",
+        "ip_permissions": [],
+        "ip_permissions_egress": [{"IpProtocol": "-1"}]
+      }
+    ],
+    "instances": [
+      {"region": "us-east-1", "instance_id": "i-0acmeweb01", "state": "running", "http_tokens": "optional"}
+    ]
+  },
+  "account_contacts": {
+    "primary_contact": {"FullName": "Acme Ops", "PhoneNumber": "+15555550100"},
+    "security_contact": null
+  }
+}

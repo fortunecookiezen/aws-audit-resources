@@ -7,7 +7,7 @@ Parameters:
     Description: "Name for the group"
   TargetAccountRoleARNs:
     Type: CommaDelimitedList
-    Default: "arn:aws:iam::ACCOUNT_ID:role/ROLE_NAME"
+    Default: "arn:aws:iam::123456789012:role/ROLE_NAME"
     Description: Comma delimited list of IAM Role ARNs in other accounts
 Resources:
   AssumeRole:

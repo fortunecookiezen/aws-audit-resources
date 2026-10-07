@@ -1,0 +1,32 @@
+# Regenerate each module's inputs/outputs tables with:
+#   for d in terraform/*/; do terraform-docs -c terraform/.terraform-docs.yml "$d"; done
+formatter: markdown table
+
+sections:
+  show:
+    - requirements
+    - providers
+    - resources
+    - inputs
+    - outputs
+
+output:
+  file: README.md
+  mode: inject
+  template: |-
+    <!-- BEGIN_TF_DOCS -->
+    {{ .Content }}
+    <!-- END_TF_DOCS -->
+
+sort:
+  enabled: true
+  by: required
+
+settings:
+  anchor: false
+  escape: true
+  html: true
+  indent: 2
+  required: true
+  sensitive: false
+  type: true

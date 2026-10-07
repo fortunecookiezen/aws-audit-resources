@@ -1,10 +1,13 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Description: >
-  'Creates a role that authorizes cross-account access from one aws account to a security support role in another account.
-  Grants access to the managed job functions in the target account. Deploy only in a single region.
-  Last updated at 2024-01-27 11:27:50 by phillips.james@gmail.com'
+  'Creates a role that authorizes cross-account access from one aws account to a security incident-response
+  support role in another account. Grants broad read access, AWS Support case management, and a curated set
+  of containment actions for incident investigation and handling - assumes an account administrator is
+  available as a subject-matter expert for anything beyond first-response containment. Deploy only in a
+  single region.
+  Last updated at 2026-08-23 by phillips.james@gmail.com'
 Metadata:
-  Version: 1.0
+  Version: 2.0
 Parameters:
   Contact:
     Type: String
@@ -22,38 +25,152 @@ Parameters:
     Type: String
     Description: 12 digit id of the account containing the users to which you're granting access
     AllowedPattern: "\\d{12}"
+  TrustedPrincipalArnPattern:
+    Type: String
+    Description: >
+      IAM principal ARN pattern (matched with a StringLike condition) within PrincipalAccountId that is
+      allowed to assume this role. Scope this to the specific SSO permission set or role you use for
+      incident-response work, rather than trusting every IAM principal in the account, e.g.
+      arn:aws:iam::<PrincipalAccountId>:role/aws-reserved/sso.amazonaws.com/*AWSReservedSSO_YourPermissionSetName_*
+      Pass "*" only if you intentionally want to trust every IAM principal in PrincipalAccountId.
+  RequireMFA:
+    Type: String
+    Description: >
+      Require aws:MultiFactorAuthPresent on the calling session to assume this role. Must be "false"
+      if your workforce users access AWS through AWS IAM Identity Center: Identity Center sessions never
+      carry aws:MultiFactorAuthPresent (enforce MFA at Identity Center sign-in instead), so "true" locks
+      every SSO user out of the role. Only set to "true" for IAM users or federated principals whose
+      sessions are issued with MFA context (e.g. sts:GetSessionToken with an MFA device).
+    AllowedValues: ["true", "false"]
+    Default: "false"
+  MaxSessionDurationSeconds:
+    Type: Number
+    Description: "Maximum session duration, in seconds, for role sessions. Must be between 3600 (1 hour) and 43200 (12 hours)."
+    Default: 3600
+    MinValue: 3600
+    MaxValue: 43200
+  IamQuarantinePolicyArn:
+    Type: String
+    Description: >
+      Managed policy this role is permitted to attach to a suspected-compromised IAM user or role in order
+      to contain it. Defaults to the AWS-maintained AWSCompromisedKeyQuarantineV3 policy, which denies
+      privilege-escalation and abuse-enabling actions (attaching/creating policies, creating access keys,
+      PassRole, RunInstances, CreateBucket, etc.) without removing the identity or its existing access for
+      forensic review. Override only if your organization maintains its own quarantine policy.
+    Default: "arn:aws:iam::aws:policy/AWSCompromisedKeyQuarantineV3"
+Conditions:
+  ShouldRequireMFA: !Equals [!Ref RequireMFA, "true"]
 Resources:
   AssumeRole:
     Type: AWS::IAM::Role
     Properties:
       ManagedPolicyArns:
         - arn:aws:iam::aws:policy/AmazonInspector2ReadOnlyAccess
-        - arn:aws:iam::aws:policy/AWSAuditManagerAdministratorAccess
         - arn:aws:iam::aws:policy/AWSSecurityHubReadOnlyAccess
         - arn:aws:iam::aws:policy/AWSSupportAccess
         - arn:aws:iam::aws:policy/ReadOnlyAccess
         - arn:aws:iam::aws:policy/SecurityAudit
       RoleName: !Join [ "-", [ !Ref OrgPrefix, "CrossAccountSecuritySupportRole"] ]
+      MaxSessionDuration: !Ref MaxSessionDurationSeconds
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
         Statement:
         - Effect: Allow
           Principal:
-            AWS: "*" # this is done to allow the use of SSO in the PrincipalAccountId. 
-            # By using the wildcard and the Condition key, you are trusting the PrincipalAccount to manage the user,
-            # just the same as if you used AWS: !Sub 'arn:aws:iam::${PrincipalAccountId}:root' for an iam user.
+            AWS: "*" # this is done to allow the use of SSO in the PrincipalAccountId.
+            # By using the wildcard and the Condition keys, you are trusting only the specific principal(s)
+            # matching TrustedPrincipalArnPattern within PrincipalAccountId - narrower than trusting the
+            # whole account root, since SSO permission set role ARNs contain a generated path segment that
+            # can't be referenced directly as a Principal.
           Action:
           - sts:AssumeRole
-          Condition:
-            StringEquals:
-              aws:PrincipalAccount: !Ref PrincipalAccountId
+          Condition: !If
+            - ShouldRequireMFA
+            - StringEquals:
+                aws:PrincipalAccount: !Ref PrincipalAccountId
+              StringLike:
+                aws:PrincipalArn: !Ref TrustedPrincipalArnPattern
+              Bool:
+                aws:MultiFactorAuthPresent: "true"
+            - StringEquals:
+                aws:PrincipalAccount: !Ref PrincipalAccountId
+              StringLike:
+                aws:PrincipalArn: !Ref TrustedPrincipalArnPattern
+      Policies:
+           - PolicyName: IncidentResponseContainment
+             PolicyDocument:
+              Version: "2012-10-17"
+              Statement:
+              - Effect: Allow
+                Action:
+                - iam:UpdateAccessKey
+                - iam:DeleteLoginProfile
+                - iam:TagUser
+                - iam:TagRole
+                Resource:
+                - !Sub "arn:${AWS::Partition}:iam::${AWS::AccountId}:user/*"
+                - !Sub "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/*"
+                Sid: IAMCredentialContainment
+              - Effect: Allow
+                Action:
+                - iam:AttachUserPolicy
+                - iam:AttachRolePolicy
+                Resource:
+                - !Sub "arn:${AWS::Partition}:iam::${AWS::AccountId}:user/*"
+                - !Sub "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/*"
+                Condition:
+                  StringEquals:
+                    iam:PolicyARN: !Ref IamQuarantinePolicyArn
+                Sid: IAMQuarantineAttach
+              - Effect: Allow
+                Action:
+                - ec2:CreateSecurityGroup
+                - ec2:RevokeSecurityGroupIngress
+                - ec2:RevokeSecurityGroupEgress
+                - ec2:ModifyInstanceAttribute
+                - ec2:ModifyNetworkInterfaceAttribute
+                - ec2:CreateSnapshot
+                - ec2:CreateImage
+                - ec2:CreateTags
+                Resource: "*"
+                Sid: Ec2NetworkIsolation
+              - Effect: Allow
+                Action:
+                - s3:PutBucketPublicAccessBlock
+                - s3:PutBucketAcl
+                Resource: "*"
+                Sid: S3ExposureLockdown
+              - Effect: Allow
+                Action:
+                - cloudtrail:StartLogging
+                - cloudtrail:PutEventSelectors
+                - config:StartConfigurationRecorder
+                - guardduty:UpdateDetector
+                Resource: "*"
+                Sid: LoggingControlRestoration
+              - Effect: Allow
+                Action:
+                - securityhub:BatchUpdateFindings
+                - securityhub:UpdateFindings
+                - guardduty:ArchiveFindings
+                - guardduty:UnarchiveFindings
+                - guardduty:UpdateFindingsFeedback
+                Resource: "*"
+                Sid: FindingWorkflowUpdates
+              - Effect: Allow
+                Action:
+                - lambda:PutFunctionConcurrency
+                - lambda:DeleteFunctionConcurrency
+                - lambda:UpdateEventSourceMapping
+                - secretsmanager:RotateSecret
+                Resource: "*"
+                Sid: LambdaSecretsContainment
       Tags:
         - Key: Owner
           Value: !Ref Owner
         - Key: Contact
           Value: !Ref Contact
 Outputs:
-  RootAdminRoleArn:
-    Description: "CrossAccountSupportRole role Arn"
+  SecuritySupportRoleArn:
+    Description: "CrossAccountSecuritySupportRole role Arn"
     Value: !GetAtt AssumeRole.Arn
-  
