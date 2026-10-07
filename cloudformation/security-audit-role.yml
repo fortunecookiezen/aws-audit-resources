@@ -4,7 +4,7 @@ Description: >
   Grants access to the ViewOnlyAccess and SecurityAudit managed job functions in the target account. Deploy only in a single region.
   Last updated at 2026-10-07 by phillips.james@gmail.com'
 Metadata:
-  Version: 3.2
+  Version: "3.2"
 Parameters:
   Contact:
     Type: String
