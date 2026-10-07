@@ -23,6 +23,8 @@ Confirm the scope is the six core areas listed above. This skill does not audit 
 
 If this account's expected exceptions aren't already known (centrally-managed root credentials, named admin roles, other pre-reviewed risks), send the account/engagement owner `references/documentation-request-template.md` now rather than waiting to correct false positives after the report is built — see `references/accepting-findings-process.md`.
 
+Also set up `engagement-info.md` now, alongside `exceptions.json` in the engagement's `audit-runs/<account_id>-<YYYYMMDD>/` directory: copy `references/engagement-info-template.md` and fill in what's known (report status starts `DRAFT`, account/engagement owner, primary contact; leave auditor fields blank if the auditor wants to fill those in directly rather than have them guessed). `scripts/build_report_final.js` reads this file for the report's cover-page author block, DRAFT/FINAL labeling, and Testing Narrative table — see Step 4 and `references/remediation-and-retesting.md`.
+
 ## Step 2: Get the account data
 
 The account data this skill evaluates can come from any of three sources. Pick whichever the user has available.
@@ -84,12 +86,13 @@ python3 scripts/run_checks.py ../audit-runs/<account_id>-<YYYYMMDD>/snapshot.jso
 
 Read the docx skill's SKILL.md, then build a Word document with this structure:
 
-1. **Executive Summary** — account(s) audited, framework, overall posture, headline numbers
-2. **Key Findings** — critical/high findings first, grouped by area
-3. **Accepted Findings** (only if `--exceptions` was used and produced any) — findings with status `"accepted"`: the underlying fact, who accepted it and why (from the exceptions file's `note`), and the matching rule. Keep these visibly separate from both Key Findings and Passing Controls — they're neither an open issue nor a clean pass, they're a reviewed, deliberate acceptance.
-4. **Passing Controls** — brief list, so the report isn't only bad news
-5. **Detailed Findings by Area** — one subsection per core area (IAM, MFA, S3, CloudTrail/Logging, Security Groups/VPC, Root Account), each finding with control reference(s) for the chosen framework, evidence, and remediation
-6. **Appendix: Scope & Methodology** — which six areas were in scope, which controls were evaluated vs. skipped (including the "manual/extended checks" list from `references/check-catalog.md`), data source used, date of collection, and whether an exceptions file was applied (and if so, note its presence in the evidence package per Step 3)
+1. **Cover page** — title, framework, a DRAFT/FINAL status banner and matching cover-table row, a "Prepared By" author block, and the Testing Narrative table (Test Start, Test Completion, Findings Draft, Findings Review, Findings Completion). All of this is sourced from `engagement-info.md` (see Step 1) — don't hand-write it per report. Every report is titled `DRAFT`, in the cover banner, the page header, and the output filename, until the explicit finalization step (Step 6); only `engagement-info.md`'s `Report Status` field changes that, and it changes all four at once.
+2. **Executive Summary** — account(s) audited, framework, overall posture, headline numbers
+3. **Key Findings** — critical/high findings first, grouped by area
+4. **Accepted Findings** (only if `--exceptions` was used and produced any) — findings with status `"accepted"`: the underlying fact, who accepted it and why (from the exceptions file's `note`), and the matching rule. Keep these visibly separate from both Key Findings and Passing Controls — they're neither an open issue nor a clean pass, they're a reviewed, deliberate acceptance.
+5. **Passing Controls** — brief list, so the report isn't only bad news
+6. **Detailed Findings by Area** — one subsection per core area (IAM, MFA, S3, CloudTrail/Logging, Security Groups/VPC, Root Account), each finding with control reference(s) for the chosen framework, evidence, and remediation
+7. **Appendix: Scope & Methodology** — which six areas were in scope, which controls were evaluated vs. skipped (including the "manual/extended checks" list from `references/check-catalog.md`), data source used, date of collection, and whether an exceptions file was applied (and if so, note its presence in the evidence package per Step 3)
 
 Write the report into the same `audit-runs/<account_id>-<YYYYMMDD>/` directory as the snapshot and findings — once the audit is complete, that whole directory is the evidence package. Follow `references/evidence-handling.md` for what to do with it next (a private evidence repo or an archive, never this repo).
 
@@ -97,8 +100,13 @@ Write the report into the same `audit-runs/<account_id>-<YYYYMMDD>/` directory a
 
 The audit doesn't end at the report. When findings get fixed, don't take anyone's word for it — re-collect fresh data and re-run the checks, and diff the new findings against the baseline rather than eyeballing the two summary counts (a fix and a regression can net out to the same pass/fail total). Full procedure, including when a full retest vs. a targeted one is appropriate and how to handle a finding that's real but doesn't map to the audited framework's controls, is in `references/remediation-and-retesting.md`. The mechanical diff itself is `scripts/diff_findings.py findings-baseline.json findings-retest.json`.
 
+## Step 6: Finalize the report
+
+A report only becomes `FINAL` through this explicit step — never by editing the cover page directly, and never automatically just because remediation activity has stopped. In short: confirm every open finding is either fixed-and-retested or formally accepted, fill in the last two Testing Narrative rows and any blank auditor fields in `engagement-info.md`, set `Report Status: FINAL`, and rebuild — the cover banner, page header, and output filename all flip from `DRAFT` to `FINAL` automatically from that one field. Keep every superseded `DRAFT` in the evidence package rather than deleting it. Full procedure is in `references/remediation-and-retesting.md`'s "Finalizing" section.
+
 ## Reference files
 
+- `references/engagement-info-template.md` — the per-engagement file format (copy to `engagement-info.md`) for author data, Report Status (DRAFT/FINAL), and the Testing Narrative table that `scripts/build_report_final.js` renders onto the report cover page
 - `references/check-catalog.md` — master table of all 27 automated checks with cross-framework control IDs (including which checks are best-practice-only, with no control in a given framework); keep in lockstep with `run_checks.py`'s `CHECKS_META`/`CHECK_FUNCS` and `collect_aws_data.py`'s collectors when extending
 - `references/cis-aws-foundations.md` — full CIS AWS Foundations Benchmark v7.0.0 control reference (36 controls, six core areas)
 - `references/well-architected-security.md` — AWS Well-Architected Security Pillar (SEC01–SEC08) mapping

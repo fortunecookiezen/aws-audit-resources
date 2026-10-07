@@ -29,6 +29,16 @@ no retest is a TODO with extra steps.
   decides, for anything that won't be fixed, whether it goes through the
   acceptance process instead.
 
+Every report this workflow produces is labeled `DRAFT` — on the cover page,
+in the page header, and in its own filename — until the explicit
+finalization step at the end of this document. That labeling, the "Prepared
+By" author block, and the Testing Narrative table (Test Start, Test
+Completion, Findings Draft, Findings Review, Findings Completion) all come
+from `engagement-info.md`, a per-engagement file alongside `exceptions.json`
+— see `engagement-info-template.md` for its format. Keep it updated as the
+engagement moves through this workflow; the milestone notes below say which
+step updates which row.
+
 ## Workflow
 
 1. **Triage findings into a remediation plan.** For every `"fail"` finding
@@ -91,9 +101,17 @@ no retest is a TODO with extra steps.
    Keep the superseded snapshot/findings/report from before the fix in the
    evidence package too — don't delete them. Name the retest artifacts so
    the sequence is obvious (`snapshot-retest-1.json`,
-   `AWS_Security_Audit_<account_id>_<framework>_retest-1.docx`, etc.) so the
-   evidence package shows the account's trajectory over time, not just
-   whatever the most recent run happened to find.
+   `AWS_Security_Audit_<account_id>_<framework>_retest-1_DRAFT.docx`, etc.)
+   so the evidence package shows the account's trajectory over time, not
+   just whatever the most recent run happened to find. Set
+   `engagement-info.md`'s `Report Variant Note` (or pass it as a build
+   argument — see the comment at the top of `build_report_final.js`) to
+   something that identifies which retest this is, e.g. "Retest 1 -
+   post-remediation." The report stays `DRAFT` — the filename suffix and
+   cover banner are automatic from `Report Status` and need no extra step.
+   The first time this step runs for an engagement, also set the Testing
+   Narrative's `Findings Draft` row to today's date; a later retest doesn't
+   change that row, it's a one-time "a draft now exists" milestone.
 
 7. **Close the loop on the remediation tracker.** Mark each fixed finding
    closed with the retest date and a pointer to the specific evidence that
@@ -158,8 +176,56 @@ tracker that it's "best practice, not mapped to \<framework>" so it isn't
 mistaken for scope creep on the audit itself, and isn't dropped just because
 it won't move the framework's headline pass/fail numbers.
 
+## Finalizing
+
+A report only becomes `FINAL` through this explicit step — never by editing
+the word on the cover page, and never by default just because remediation
+work has stopped. Do this once, when the engagement is actually done:
+
+1. **Confirm every finding is settled.** Run `diff_findings.py` one more
+   time against the latest retest. Every open (`"fail"`) finding must be
+   either genuinely fixed (confirmed by that retest) or explicitly accepted
+   in `exceptions.json` per `accepting-findings-process.md` — "we're not
+   going to get to this one" is not a reason to finalize, it's a reason to
+   either fix it, accept it, or keep the report `DRAFT` until one of those
+   happens.
+
+2. **Fill in the last two Testing Narrative rows in `engagement-info.md`:**
+   `Findings Review` (who reviewed the final findings and when — this can
+   be the auditor, the account/engagement owner, or both; record whoever
+   actually did it) and `Findings Completion` (today's date, once step 1
+   above is actually true). Fill in the `Auditor Name/Title/Organization/
+   Contact` fields too if they were left blank during drafting — a `FINAL`
+   report shouldn't still say "Not provided" for who produced it.
+
+3. **Set `Report Status: FINAL`** in `engagement-info.md`.
+
+4. **Rebuild the report.** Nothing else changes about the build command —
+   the cover banner, page header, and output filename all flip from `DRAFT`
+   to `FINAL` automatically because they're all driven by `Report Status`.
+   Verify the rebuilt file before treating it as the deliverable (render to
+   PDF, check the cover page says `FINAL` and the Testing Narrative table is
+   fully populated with no `Pending` rows left).
+
+5. **Treat every `DRAFT` version as superseded, not deleted.** Keep them in
+   the evidence package (per `evidence-handling.md`) so the engagement's
+   actual history — including what the findings looked like before each
+   round of remediation — stays in the record. The `FINAL` report is the
+   one that gets delivered/distributed going forward; a `DRAFT` is not meant
+   to circulate as if it were final, which is exactly what the cover banner,
+   header, and filename are there to prevent.
+
+If something changes after finalization (a new finding surfaces, a prior
+fix regresses, an accepted exception needs revisiting), don't edit the
+`FINAL` report in place — that defeats the point of labeling it. Open a new
+engagement cycle: a fresh retest, a new `DRAFT`, and its own path back to
+`FINAL` once settled.
+
 ## Related reference files
 
+- `engagement-info-template.md` — the per-engagement file format for author
+  data, report status, and the Testing Narrative this document's milestones
+  update
 - `accepting-findings-process.md` — the process for findings that get
   accepted rather than remediated
 - `exceptions-and-exclusions.md` — the `--exceptions` file format referenced
