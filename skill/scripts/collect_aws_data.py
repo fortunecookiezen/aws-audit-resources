@@ -7,7 +7,9 @@ Security Groups/VPC, root account) via boto3 and writes a single JSON snapshot
 that scripts/run_checks.py can evaluate against a chosen compliance framework.
 
 Usage:
-    pip install boto3 --break-system-packages
+    # From the skill/ directory, in a virtual environment (never the system Python):
+    python3 -m venv .venv && source .venv/bin/activate
+    pip install -r requirements.txt
 
     # Using credentials already in the environment / a named profile:
     python3 collect_aws_data.py --all-regions -o snapshot.json
@@ -53,7 +55,7 @@ try:
     import boto3
     from botocore.exceptions import ClientError
 except ImportError:
-    print("boto3 is required: pip install boto3 --break-system-packages", file=sys.stderr)
+    print("boto3 is required: activate a venv and run pip install -r requirements.txt (from the skill/ directory)", file=sys.stderr)
     sys.exit(1)
 
 

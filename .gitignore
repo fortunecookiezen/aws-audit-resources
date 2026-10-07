@@ -42,3 +42,6 @@ terraform.rc
 # commit the result to a separate private evidence repo or an archive instead.
 # See skill/references/evidence-handling.md for the full workflow.
 /audit-runs/
+
+# Python virtual environments (see skill/requirements.txt)
+.venv/
