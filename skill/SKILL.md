@@ -29,7 +29,7 @@ cp references/engagement-info-template.md ../audit-runs/<account_id>-<YYYYMMDD>/
 
 If this account's expected exceptions aren't already known (centrally-managed root credentials, named admin roles, other pre-reviewed risks), send the account/engagement owner `references/documentation-request-template.md` now rather than waiting to correct false positives after the report is built — see `references/accepting-findings-process.md`. When it comes back, save it in the engagement directory as `documentation-request-response.md` (or the signed PDF, `documentation-request-response.pdf`), and put its attachments — `list-organizations-features` output, console screenshots, tickets — under `evidence/` there. Then transcribe it into `exceptions.json` in the same directory, section by section, using the mapping in `references/exceptions-and-exclusions.md` ("From the documentation request"). `exceptions.json` is optional: if there are no exceptions, don't create it, and leave `--exceptions` off in Step 3.
 
-Fill in `engagement-info.md` with what's known (report status starts `DRAFT`, account/engagement owner, primary contact; leave auditor fields blank if the auditor wants to fill those in directly rather than have them guessed). `scripts/build_report_final.js` reads this file for the report's cover-page author block, DRAFT/FINAL labeling, and Testing Narrative table — see Step 4 and `references/remediation-and-retesting.md`.
+Fill in `engagement-info.md` with what's known (report status starts `DRAFT`, account/engagement owner, primary contact; leave auditor fields blank if the auditor wants to fill those in directly rather than have them guessed). `scripts/build_report.py` reads this file for the report's cover-page author block, DRAFT/FINAL labeling, and Testing Narrative table — see Step 4 and `references/remediation-and-retesting.md`.
 
 ## Step 2: Get the account data
 
@@ -94,7 +94,14 @@ python3 scripts/run_checks.py ../audit-runs/<account_id>-<YYYYMMDD>/snapshot.jso
 
 ## Step 4: Build the report
 
-Read the docx skill's SKILL.md, then build a Word document with this structure:
+Build the Word report with `scripts/build_report.py`, from this skill directory, in the venv from Step 2 (if you used Step 2 B or C, create it as shown in Step 2 A.3 — `requirements.txt` includes the report builder's dependency):
+```bash
+python3 scripts/build_report.py ../audit-runs/<account_id>-<YYYYMMDD>/findings.json
+# → ../audit-runs/<account_id>-<YYYYMMDD>/AWS_Security_Audit_<account_id>_<framework>_DRAFT.docx
+```
+It reads `engagement-info.md` from the same directory (and `snapshot.json`, if present, for regions and the collecting identity), and fails with a clear message if `engagement-info.md` is missing, has a `Report Status` other than `DRAFT`/`FINAL`, or is missing a Testing Narrative row. For a retest, add `--label retest-1` (and optionally `--variant-note "Retest 1 - post-remediation"`); if the data came from exported files or a connector (Step 2 B/C) rather than the collector, say so with `--data-source "..."`. Run `python3 scripts/build_report.py --help` for all options.
+
+The report it produces has this structure:
 
 1. **Cover page** — title, framework, a DRAFT/FINAL status banner and matching cover-table row, a "Prepared By" author block, and the Testing Narrative table (Test Start, Test Completion, Findings Draft, Findings Review, Findings Completion). All of this is sourced from `engagement-info.md` (see Step 1) — don't hand-write it per report. Every report is titled `DRAFT`, in the cover banner, the page header, and the output filename, until the explicit finalization step (Step 6); only `engagement-info.md`'s `Report Status` field changes that, and it changes all four at once.
 2. **Executive Summary** — account(s) audited, framework, overall posture, headline numbers
@@ -116,7 +123,7 @@ A report only becomes `FINAL` through this explicit step — never by editing th
 
 ## Reference files
 
-- `references/engagement-info-template.md` — the per-engagement file format (copy to `engagement-info.md`) for author data, Report Status (DRAFT/FINAL), and the Testing Narrative table that `scripts/build_report_final.js` renders onto the report cover page
+- `references/engagement-info-template.md` — the per-engagement file format (copy to `engagement-info.md`) for author data, Report Status (DRAFT/FINAL), and the Testing Narrative table that `scripts/build_report.py` renders onto the report cover page
 - `references/check-catalog.md` — master table of all 27 automated checks with cross-framework control IDs (including which checks are best-practice-only, with no control in a given framework); keep in lockstep with `run_checks.py`'s `CHECKS_META`/`CHECK_FUNCS` and `collect_aws_data.py`'s collectors when extending
 - `references/cis-aws-foundations.md` — full CIS AWS Foundations Benchmark v7.0.0 control reference (36 controls, six core areas)
 - `references/well-architected-security.md` — AWS Well-Architected Security Pillar (SEC01–SEC08) mapping
@@ -132,4 +139,5 @@ A report only becomes `FINAL` through this explicit step — never by editing th
 
 - `scripts/collect_aws_data.py` — boto3 collector; supports `--profile`, `--role-arn`/`--role-session-name` (assume-role), `--regions`/`--all-regions`, `-o/--output`
 - `scripts/run_checks.py` — evaluates a snapshot against one framework; `snapshot.json --framework {cis|well_architected|soc2|iso27001|all} [--exceptions exceptions.json] -o findings.json`
+- `scripts/build_report.py` — builds the Step 4 Word report from a findings file plus `engagement-info.md`; `findings.json [--label retest-1] [--variant-note "..."] [--data-source "..."] [--snapshot snapshot.json] [--engagement-info path] [--out-dir dir]`
 - `scripts/diff_findings.py` — compares a baseline and a retest findings.json per check/resource (not just summary counts) for the Step 5 remediation workflow; `findings-baseline.json findings-retest.json [-o diff.json]`
