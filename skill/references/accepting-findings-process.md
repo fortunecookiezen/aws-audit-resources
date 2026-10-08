@@ -80,6 +80,11 @@ in advance should cover the majority of an account's known exceptions.
    - *A longer root-reuse window*: the account's actual audit/review
      cadence (e.g., quarterly reviews justify a 90-day window; annual
      reviews justify 365).
+   - *Any other failing finding* (`accepted_findings`): the specific
+     resource, the compensating control or business reason, and something
+     that shows the control exists — a bucket policy, a security group's
+     source-restriction rule elsewhere, a ticket for the planned fix. The
+     owner who accepts it, and a date to review it again, are required.
 
 3. **Get sign-off** from the account/engagement owner (or, for anything
    independently verifiable, confirm it directly rather than asking). Record
@@ -142,6 +147,10 @@ audit finding, not a tooling bug:
 - An exception with no `note`, or a `note` that doesn't actually explain
   *why* — "approved" or "fine" is not a justification a future reader can
   evaluate.
+- Accepting a whole control rather than a reviewed resource — an
+  `accepted_findings` rule whose `resource` pattern matches everything that
+  check covers. `run_checks.py` warns when a rule matches every resource of
+  its check; treat that warning as a reason to narrow the pattern.
 - "Temporary" access with no removal plan or review date. If it's temporary,
   track when it should stop being true and re-check then, rather than
   carrying the exception forward indefinitely.
@@ -165,6 +174,11 @@ something to revisit on every re-audit, not a permanent fixture:
   matches only what it was meant to. A loosely-scoped pattern that matched
   one role at the time it was written can start matching a second,
   unreviewed role later without anyone noticing, unless this is checked.
+  The same applies to `accepted_findings` resource patterns.
+- Act on every `WARNING:` from `run_checks.py`. An expired
+  `accepted_findings` rule (`review_by` has passed) leaves its finding as
+  `"fail"` until the owner re-approves it with a new `review_by`; a rule
+  that matches nothing should be removed or corrected, not left in place.
 - If an engagement has a fixed cadence (quarterly, annual), review the
   exceptions file as part of audit kickoff — this is also a natural time to
   resend `documentation-request-template.md` and confirm nothing material

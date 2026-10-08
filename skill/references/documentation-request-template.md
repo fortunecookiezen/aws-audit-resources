@@ -83,10 +83,15 @@ Common categories to check for, even if you don't think of them as
 reviewed and accepted for a specific reason — not limited to root or IAM
 findings.*
 
-| Finding / control area | What's expected to be flagged | Compensating control or justification | Owner / approver | Review date |
-|---|---|---|---|---|
-| | | | | |
-| | | | | |
+*Name the specific resource (bucket, security group, VPC, user) where you
+can, and give a date by which the acceptance should be reviewed again —
+an accepted risk with no review date won't be recorded. Leave the last
+column blank; the auditor fills it in.*
+
+| Finding / control area | Resource(s) | What's expected to be flagged | Compensating control or justification | Owner / approver | Approval date | Review-by date | Check ID *(auditor)* |
+|---|---|---|---|---|---|---|---|
+| | | | | | | | |
+| | | | | | | | |
 
 ## 5. Security and compliance contacts
 

@@ -90,6 +90,8 @@ python3 scripts/run_checks.py ../audit-runs/<account_id>-<YYYYMMDD>/snapshot.jso
   -o ../audit-runs/<account_id>-<YYYYMMDD>/findings.json
 ```
 
+`exceptions.json` can also accept a specific failing finding for any other check (a public website bucket, an intentionally open port) through `accepted_findings` rules, which need an approver and a `review_by` date — see `references/exceptions-and-exclusions.md`. Read every `WARNING:` line `run_checks.py` prints (also saved in `summary.exceptions_warnings`): it flags rules that were refused, have expired, match nothing, or look too broad.
+
 ## Step 4: Build the report
 
 Read the docx skill's SKILL.md, then build a Word document with this structure:
