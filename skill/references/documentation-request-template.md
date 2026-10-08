@@ -10,8 +10,12 @@ run instead of a correction pass. Delete this intro paragraph and the
 instructions in *italics* before sending; everything else is meant to be
 filled in and returned.
 
-Answers here transcribe directly into `exceptions.json` — see
-`exceptions-and-exclusions.md` for the schema each section below maps to.
+When the completed response comes back, the auditor saves it as
+`audit-runs/<account_id>-<YYYYMMDD>/documentation-request-response.md` (or
+`.pdf` if returned signed), with its attachments under `evidence/` in the same
+directory, then transcribes it into `exceptions.json` — see
+`exceptions-and-exclusions.md`, "From the documentation request," for which
+section maps to which field.
 
 ---
 

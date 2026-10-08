@@ -9,7 +9,7 @@ Audits the six core technical areas of an AWS account's security posture — IAM
 
 This skill lives inside the `aws-audit-resources` repository, alongside the IAM role templates (`cloudformation/`, `terraform/`) that provide the actual cross-account access the live-data path below uses. If you are working inside a checkout of that repo, the role templates referenced in Step 2 are at `../cloudformation/security-audit-role.yml` and `../terraform/security-audit-role/` relative to this skill directory.
 
-**Before collecting any real account data**, create a per-engagement working directory at the repo root — `audit-runs/<account_id>-<YYYYMMDD>/` (e.g. `../audit-runs/111122223333-20261006/` relative to this skill directory) — and write the snapshot, findings, and report there, not into the repo's tracked directories. That path is covered by this repo's `.gitignore` for exactly this reason. See `references/evidence-handling.md` for the full clone → audit → evidence → private-repo-or-archive lifecycle, including what to do with the working directory once the audit is done. Fixture data under `skill/evals/` is synthetic and exempt from this — it's checked in deliberately, see `evals/fixtures/README.md`.
+**Before collecting any real account data**, create a per-engagement working directory at the repo root — `audit-runs/<account_id>-<YYYYMMDD>/` (e.g. `../audit-runs/111122223333-20261006/` relative to this skill directory) — as part of Step 1, and write `engagement-info.md`, `exceptions.json`, the snapshot, findings, and report there, not into the repo's tracked directories. That path is covered by this repo's `.gitignore` for exactly this reason. See `references/evidence-handling.md` for the full clone → audit → evidence → private-repo-or-archive lifecycle, including what to do with the working directory once the audit is done. Fixture data under `skill/evals/` is synthetic and exempt from this — it's checked in deliberately, see `evals/fixtures/README.md`.
 
 ## Step 1: Confirm framework and scope
 
@@ -21,9 +21,15 @@ Ask the user which framework to audit against if not already specified:
 
 Confirm the scope is the six core areas listed above. This skill does not audit RDS, EFS, EBS, KMS-general, AWS Config, AWS Organizations governance, Security Hub/GuardDuty enablement, or other services outside those six areas — if the user wants broader coverage, note that it's out of scope for this version rather than guessing at checks that don't exist yet.
 
-If this account's expected exceptions aren't already known (centrally-managed root credentials, named admin roles, other pre-reviewed risks), send the account/engagement owner `references/documentation-request-template.md` now rather than waiting to correct false positives after the report is built — see `references/accepting-findings-process.md`.
+Create the engagement directory and its `engagement-info.md` now, from this skill directory:
+```bash
+mkdir -p ../audit-runs/<account_id>-<YYYYMMDD>
+cp references/engagement-info-template.md ../audit-runs/<account_id>-<YYYYMMDD>/engagement-info.md
+```
 
-Also set up `engagement-info.md` now, alongside `exceptions.json` in the engagement's `audit-runs/<account_id>-<YYYYMMDD>/` directory: copy `references/engagement-info-template.md` and fill in what's known (report status starts `DRAFT`, account/engagement owner, primary contact; leave auditor fields blank if the auditor wants to fill those in directly rather than have them guessed). `scripts/build_report_final.js` reads this file for the report's cover-page author block, DRAFT/FINAL labeling, and Testing Narrative table — see Step 4 and `references/remediation-and-retesting.md`.
+If this account's expected exceptions aren't already known (centrally-managed root credentials, named admin roles, other pre-reviewed risks), send the account/engagement owner `references/documentation-request-template.md` now rather than waiting to correct false positives after the report is built — see `references/accepting-findings-process.md`. When it comes back, save it in the engagement directory as `documentation-request-response.md` (or the signed PDF, `documentation-request-response.pdf`), and put its attachments — `list-organizations-features` output, console screenshots, tickets — under `evidence/` there. Then transcribe it into `exceptions.json` in the same directory, section by section, using the mapping in `references/exceptions-and-exclusions.md` ("From the documentation request"). `exceptions.json` is optional: if there are no exceptions, don't create it, and leave `--exceptions` off in Step 3.
+
+Fill in `engagement-info.md` with what's known (report status starts `DRAFT`, account/engagement owner, primary contact; leave auditor fields blank if the auditor wants to fill those in directly rather than have them guessed). `scripts/build_report_final.js` reads this file for the report's cover-page author block, DRAFT/FINAL labeling, and Testing Narrative table — see Step 4 and `references/remediation-and-retesting.md`.
 
 ## Step 2: Get the account data
 
@@ -47,13 +53,12 @@ This repo's `cloudformation/security-audit-role.yml` (or the equivalent `terrafo
    ```
    Alternatively, pass `--role-arn` directly to `collect_aws_data.py` (see below) and let it assume the role itself via `boto3.client('sts').assume_role(...)` rather than exporting credentials into the shell.
 
-3. **Run the collector, writing into the engagement's `audit-runs/` directory:**
+3. **Run the collector, writing into the engagement directory created in Step 1:**
    ```bash
    # Python >= 3.10 required (macOS's /usr/bin/python3 is 3.9 — use Homebrew/pyenv/uv Python).
    # Use a venv rather than installing into the system/Homebrew Python.
    python3 -m venv .venv && source .venv/bin/activate
    pip install -r requirements.txt
-   mkdir -p ../audit-runs/<account_id>-<YYYYMMDD>
    python3 scripts/collect_aws_data.py --all-regions -o ../audit-runs/<account_id>-<YYYYMMDD>/snapshot.json
    # or, to have the script assume the role itself instead of pre-exporting credentials:
    python3 scripts/collect_aws_data.py --all-regions --role-arn $AUDIT_ROLE_ARN -o ../audit-runs/<account_id>-<YYYYMMDD>/snapshot.json
