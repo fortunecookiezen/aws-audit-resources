@@ -2,7 +2,7 @@
 
 *Copy this file to `engagement-info.md` in the engagement's
 `audit-runs/<account_id>-<YYYYMMDD>/` directory, alongside `exceptions.json`
-and the snapshot/findings files. `scripts/build_report_final.js` reads it
+and the snapshot/findings files. `scripts/build_report.py` reads it
 directly and prints its contents on the report's cover page and in the
 Testing Narrative table - fill it in before the first report build, and
 keep updating it as the engagement progresses (see
@@ -29,7 +29,7 @@ before filling the file in.*
 
 *Field notes:*
 - *`Report Status` is either `DRAFT` or `FINAL` (case-insensitive), exactly.
-  Every report built while this says `DRAFT` is watermarked and filed as a
+  Every report built while this says `DRAFT` is labeled and filed as a
   draft - title, cover banner, page header, and output filename all say so.
   Only change it to `FINAL` as the explicit finalization step described in
   `remediation-and-retesting.md`.*

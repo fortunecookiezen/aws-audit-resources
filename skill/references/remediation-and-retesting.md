@@ -95,9 +95,14 @@ step updates which row.
    like a "fixed" S3 finding when what actually happened is the resource is
    gone, not corrected).
 
-6. **Update the report and evidence package.** Regenerate `report_data*.json`
-   and the `.docx` report from the retest findings
-   (`scripts/build_report_data.py`, the repo's report-builder script).
+6. **Update the report and evidence package.** Rebuild the `.docx` report
+   from the retest findings with `scripts/build_report.py`:
+   ```bash
+   python3 scripts/build_report.py ../audit-runs/<account_id>-<YYYYMMDD>/findings-retest-1.json \
+     --label retest-1
+   ```
+   It picks up `snapshot-retest-1.json` and `engagement-info.md` from the
+   same directory.
    Keep the superseded snapshot/findings/report from before the fix in the
    evidence package too — don't delete them. Name the retest artifacts so
    the sequence is obvious (`snapshot-retest-1.json`,
@@ -105,7 +110,7 @@ step updates which row.
    so the evidence package shows the account's trajectory over time, not
    just whatever the most recent run happened to find. Set
    `engagement-info.md`'s `Report Variant Note` (or pass it as a build
-   argument — see the comment at the top of `build_report_final.js`) to
+   argument, `--variant-note`, which overrides it for that build only) to
    something that identifies which retest this is, e.g. "Retest 1 -
    post-remediation." The report stays `DRAFT` — the filename suffix and
    cover banner are automatic from `Report Status` and need no extra step.
@@ -203,7 +208,10 @@ work has stopped. Do this once, when the engagement is actually done:
 4. **Rebuild the report.** Nothing else changes about the build command —
    the cover banner, page header, and output filename all flip from `DRAFT`
    to `FINAL` automatically because they're all driven by `Report Status`.
-   Verify the rebuilt file before treating it as the deliverable (render to
+   `build_report.py` prints a `WARNING:` for anything this checklist says
+   should already be settled (findings still `"fail"`, `Pending` Testing
+   Narrative rows, blank auditor fields); a `FINAL` built with warnings
+   isn't ready to deliver. Verify the rebuilt file before treating it as the deliverable (render to
    PDF, check the cover page says `FINAL` and the Testing Narrative table is
    fully populated with no `Pending` rows left).
 
