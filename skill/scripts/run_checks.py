@@ -30,8 +30,8 @@ doesn't masquerade as satisfying a control that doesn't exist.
 
 Findings carry one of three statuses: "pass", "fail", or "accepted" - the last
 one only ever produced when an --exceptions file explicitly matches a finding
-(a centrally-managed root user, or a named admin principal on the accepted
-list). "accepted" findings are never silently dropped: they stay in the output
+(a centrally-managed root user, a named admin principal on the accepted
+list, or an accepted_findings rule for a specific check and resource). "accepted" findings are never silently dropped: they stay in the output
 with the evidence and the exception's own justification note attached, so the
 report can show them as deliberately risk-accepted rather than as open issues.
 
@@ -447,6 +447,104 @@ def _match_accepted_admin_principal(name, arn, exceptions):
         if match_field and re.search(pattern, match_field):
             return entry
     return None
+
+
+# Checks that accepted_findings rules may not touch. The root checks have
+# their own corroborated path (_root_centrally_managed), and admin-policy
+# findings have accepted_admin_principals - a generic rule would let either
+# skip its stricter checks.
+ACCEPTED_FINDINGS_FORBIDDEN_CHECKS = {
+    "root_mfa_enabled",
+    "root_hardware_mfa",
+    "root_no_access_keys",
+    "root_not_used_routinely",
+    "iam_no_full_admin_policy",
+}
+ACCEPTED_FINDINGS_REQUIRED_FIELDS = ("check_id", "resource", "note", "approved_by", "approved_date", "review_by")
+
+
+def _validate_accepted_finding_rule(rule):
+    """Return a reason string if an accepted_findings rule must not be
+    applied, or None if it's usable. Invalid rules are reported, never
+    silently applied or silently dropped."""
+    missing = [f for f in ACCEPTED_FINDINGS_REQUIRED_FIELDS if not str(rule.get(f) or "").strip()]
+    if missing:
+        return f"missing required field(s): {', '.join(missing)}"
+    check_id = rule["check_id"]
+    if check_id in ACCEPTED_FINDINGS_FORBIDDEN_CHECKS:
+        alt = "accepted_admin_principals" if check_id == "iam_no_full_admin_policy" else "root_credentials_centrally_managed"
+        return f"{check_id} can't be accepted this way; use {alt}"
+    if check_id not in CHECKS_META:
+        return f"unknown check_id {check_id!r} (see references/check-catalog.md)"
+    pattern = rule["resource"]
+    if not pattern.startswith("^"):
+        return f"resource pattern {pattern!r} must be anchored with ^"
+    try:
+        compiled = re.compile(pattern)
+    except re.error as e:
+        return f"resource pattern {pattern!r} is not a valid regex: {e}"
+    if compiled.fullmatch(""):
+        return f"resource pattern {pattern!r} matches an empty string; it's too broad"
+    if check_id == "iam_credentials_unused_45d" and compiled.search("<root_account>"):
+        return "the root row of iam_credentials_unused_45d can't be accepted this way; use root_credentials_centrally_managed"
+    try:
+        datetime.fromisoformat(rule["review_by"])
+    except ValueError:
+        return f"review_by {rule['review_by']!r} is not a YYYY-MM-DD date"
+    return None
+
+
+def _apply_accepted_findings(findings, exceptions, snap):
+    """Downgrade "fail" findings matched by an accepted_findings rule to
+    "accepted", in place. A "pass" is never touched. Expiry (review_by) is
+    judged against the snapshot's collected_at, so a given snapshot +
+    exceptions file always produces the same result. Returns a list of
+    warning strings for invalid, expired, overly broad, and unmatched rules."""
+    rules = (exceptions or {}).get("accepted_findings") or []
+    warnings = []
+    now = _reference_now(snap).date()
+    usable = []
+    for i, rule in enumerate(rules):
+        label = f"accepted_findings[{i}] ({rule.get('check_id')} / {rule.get('resource')})"
+        reason = _validate_accepted_finding_rule(rule)
+        if reason:
+            warnings.append(f"{label} not applied: {reason}.")
+            continue
+        usable.append((label, rule, datetime.fromisoformat(rule["review_by"]).date()))
+
+    for label, rule, review_by in usable:
+        check_id, pattern = rule["check_id"], rule["resource"]
+        resources = [f for f in findings if f["check_id"] == check_id]
+        matched = [
+            f for f in resources
+            if re.search(pattern, str(f["resource"]))
+            # The root row of the credential report is covered by the
+            # root-management path, never by a generic rule.
+            and not (check_id == "iam_credentials_unused_45d" and f["resource"] == "<root_account>")
+        ]
+        if not matched:
+            warnings.append(f"{label} matched no findings; the resource may have been renamed or removed.")
+            continue
+        if len(resources) > 1 and len(matched) == len(resources):
+            warnings.append(f"{label} matches every {check_id} resource ({len(matched)}); check it isn't broader than what was reviewed.")
+        expired = review_by < now
+        for f in matched:
+            if f["status"] != "fail":
+                continue
+            if expired:
+                f["evidence"] += (
+                    f" Acceptance expired on {rule['review_by']} (approved by {rule['approved_by']} "
+                    f"on {rule['approved_date']}); treated as an open finding until re-reviewed."
+                )
+                continue
+            f["status"] = "accepted"
+            f["evidence"] += (
+                f" Accepted: {rule['note']} (approved by {rule['approved_by']} on {rule['approved_date']}; "
+                f"review by {rule['review_by']}; rule: {check_id} / {pattern})."
+            )
+        if expired:
+            warnings.append(f"{label} expired on {rule['review_by']}; matching findings left as fail.")
+    return warnings
 
 
 # ---------------------------------------------------------------------------
@@ -1057,6 +1155,8 @@ def run(snapshot, framework, exceptions=None):
                 "evidence": r["evidence"],
             })
 
+    exceptions_warnings = _apply_accepted_findings(findings, exceptions, snapshot)
+
     failed = [f for f in findings if f["status"] == "fail"]
     passed = [f for f in findings if f["status"] == "pass"]
     accepted = [f for f in findings if f["status"] == "accepted"]
@@ -1076,6 +1176,7 @@ def run(snapshot, framework, exceptions=None):
         "checks_evaluated": checks_evaluated,
         "checks_skipped": checks_skipped,
         "exceptions_applied": bool(exceptions),
+        "exceptions_warnings": exceptions_warnings,
     }
 
     return {"summary": summary, "findings": findings}
@@ -1108,6 +1209,8 @@ def main():
         f"Wrote {args.output}",
         file=sys.stderr,
     )
+    for w in result["summary"]["exceptions_warnings"]:
+        print(f"WARNING: {w}", file=sys.stderr)
 
 
 if __name__ == "__main__":
