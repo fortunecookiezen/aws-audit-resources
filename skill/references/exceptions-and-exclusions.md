@@ -114,8 +114,12 @@ you don't need this block at all when the collector could confirm it itself.
 
 - **`root_credentials_centrally_managed.attested`** — set `true` only after
   independently confirming it (see above), not on the auditee's say-so alone.
-  `attested_by`, `attested_date`, and `note` are carried verbatim into the
-  finding's evidence so the report shows who made the call and why.
+  `attested_by` is the person who did that independent confirmation (usually
+  the auditor, or the management-account owner who ran the check);
+  `attested_date` is when. Record the account owner's sign-off, if separate,
+  in `note` along with the evidence it rests on. All three are carried
+  verbatim into the finding's evidence so the report shows who made the call
+  and why.
 - **`root_routine_use_window_days`** — integer; default `365`. Root activity
   (password sign-in or access-key use) older than this is not treated as
   "routine use." Lower it (e.g. `180`) for a stricter review, or if your audit
@@ -127,6 +131,24 @@ you don't need this block at all when the collector could confirm it itself.
   order doesn't otherwise matter. `note` is required in spirit even though
   not enforced — it's what shows up next to the finding in the report, and an
   empty justification defeats the point of making this explicit.
+
+## From the documentation request
+
+How each section of a completed `documentation-request-template.md`
+response (saved as `documentation-request-response.md` in the engagement
+directory) becomes `exceptions.json`:
+
+| Template section | `exceptions.json` |
+|---|---|
+| §2 Root Access Management = **Yes**, *and* independently confirmed (see "What's auto-detected vs. what needs attestation") | `root_credentials_centrally_managed`: `attested: true`, `attested_by` = whoever confirmed it, `attested_date`, `note` citing the evidence file under `evidence/` and the owner's sign-off. A "Yes" with no independent confirmation is **not** enough — leave the block out and follow up. |
+| §2 root-credential review cadence | `root_routine_use_window_days` (quarterly → `90`, semi-annual → `180`, annual → `365`). Omit for the default of 365. |
+| §3 each admin role/user row | One `accepted_admin_principals` entry. Name or pattern → `pattern` (anchor exact names with `^...$`; use a prefix pattern such as `^AWSReservedSSO_AdministratorAccess_` for AWS-generated suffixes). Purpose / justification, owner/approver, and last-reviewed → `note`. |
+| §4 other accepted risks | No field yet: `run_checks.py` can only mark admin principals `accepted`. List these by hand in the report's accepted-findings section (Step 4 of `SKILL.md`), citing the response. |
+| §1, §5, §6 (engagement info, contacts, sign-off) | Not transcribed. Contacts and dates belong in `engagement-info.md`; the sign-off stays in the saved response as the record of who approved the entries above. |
+
+Check every row against "What not to accept" in
+`accepting-findings-process.md` before transcribing it — a response row is a
+request to accept, not an acceptance.
 
 ## What "accepted" means in the output
 

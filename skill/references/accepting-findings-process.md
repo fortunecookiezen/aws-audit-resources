@@ -106,7 +106,9 @@ in advance should cover the majority of an account's known exceptions.
 
 6. **Keep the exceptions file in the evidence package.** It lives alongside
    the snapshot and findings in `audit-runs/<account_id>-<YYYYMMDD>/` (see
-   `evidence-handling.md`) and should move with them into the private
+   `evidence-handling.md`), together with the completed
+   `documentation-request-response.md` and its `evidence/` attachments that
+   justify each entry, and should move with them into the private
    evidence repo or archive — an exceptions file with no accompanying
    evidence package is just an unaudited claim with extra steps.
 

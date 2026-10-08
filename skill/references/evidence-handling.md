@@ -16,7 +16,7 @@ This doc is the intended lifecycle for a single audit engagement, start to finis
    audit-runs/<account_id>-<YYYYMMDD>/
    ```
 
-   e.g. `audit-runs/111122223333-20261006/`. This path is covered by this repo's `.gitignore` (see below) specifically so step 4's output can land inside a clone of this repo without any risk of it being swept into a commit here by an `git add -A`/`git add .` run from the repo root.
+   e.g. `audit-runs/111122223333-20261006/`. Create it at engagement kickoff (`skill/SKILL.md` Step 1), not when data collection starts — `engagement-info.md`, the completed `documentation-request-response.md` (or `.pdf`), its supporting `evidence/` attachments, and `exceptions.json` all go here before the first snapshot is taken. This path is covered by this repo's `.gitignore` (see below) specifically so step 4's output can land inside a clone of this repo without any risk of it being swept into a commit here by an `git add -A`/`git add .` run from the repo root.
 
 4. **Run the audit into that directory.** Assume the role, then:
 
@@ -27,7 +27,7 @@ This doc is the intended lifecycle for a single audit engagement, start to finis
      --framework cis -o audit-runs/111122223333-20261006/findings.json
    ```
 
-   Build the Word report (`skill/SKILL.md` Step 4) into the same directory, e.g. `audit-runs/111122223333-20261006/report.docx`. At this point the directory holds the full evidence package: raw snapshot, evaluated findings, and the human-readable report.
+   Build the Word report (`skill/SKILL.md` Step 4) into the same directory, e.g. `audit-runs/111122223333-20261006/report.docx`. At this point the directory holds the full evidence package: engagement info, the documentation request response and its evidence, the exceptions file, raw snapshot, evaluated findings, and the human-readable report.
 
 5. **Decide where the evidence lives.** Once the audit is complete, move `audit-runs/<account_id>-<date>/` to one of:
 
