@@ -95,8 +95,15 @@ can, and give a date by which the acceptance should be reviewed again —
 an accepted risk with no review date won't be recorded. Leave the last
 column blank; the auditor fills it in.*
 
-| Finding / control area | Resource(s) | What's expected to be flagged | Compensating control or justification | Owner / approver | Approval date | Review-by date | Check ID *(auditor)* |
+*For Current state, describe how the resource actually falls short today,
+specifically enough that the auditor can check it against what the audit
+finds. The acceptance covers that state only: if the audit finds something
+worse, it isn't covered. Use YYYY-MM-DD for dates. The first row is an
+example; replace or delete it.*
+
+| Finding / control area | Resource(s) | Current state (how it falls short) | Compensating control or justification | Owner / approver | Approval date | Review-by date | Check ID *(auditor)* |
 |---|---|---|---|---|---|---|---|
+| *Example: S3 MFA Delete* | *`acme-tfstate-prod`, `acme-tfstate-dev`* | *MFA Delete disabled; versioning enabled* | *Object Lock (governance mode, 30-day retention); an SCP denies `s3:PutBucketVersioning` outside the deploy role* | *Jane Doe, Platform Lead* | *2026-10-01* | *2027-04-01* | |
 | | | | | | | | |
 | | | | | | | | |
 
