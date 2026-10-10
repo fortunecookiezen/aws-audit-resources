@@ -126,7 +126,7 @@ you don't need this block at all when the collector could confirm it itself.
   independently confirming it (see above), not on the auditee's say-so alone.
   `attested_by` is the person who did that independent confirmation (usually
   the auditor, or the management-account owner who ran the check);
-  `attested_date` is when. Record the account owner's sign-off, if separate,
+  `attested_date` is when, as `YYYY-MM-DD`. Record the account owner's sign-off, if separate,
   in `note` along with the evidence it rests on. All three are carried
   verbatim into the finding's evidence so the report shows who made the call
   and why.
@@ -153,7 +153,9 @@ you don't need this block at all when the collector could confirm it itself.
     reason, citing the evidence under `evidence/`.
   - `approved_by`, `approved_date` — who accepted the risk and when (the
     account/engagement owner, per `accepting-findings-process.md`).
-  - `review_by` — `YYYY-MM-DD`. After this date the rule stops applying: the
+    `approved_date` is `YYYY-MM-DD`.
+  - `review_by` — `YYYY-MM-DD`, required; `run_checks.py` refuses a rule
+    whose `review_by` it can't read as a date. After this date the rule stops applying: the
     finding goes back to `"fail"` with an "acceptance expired" note. Expiry
     is judged against the snapshot's `collected_at`, so re-running the same
     snapshot always gives the same result.

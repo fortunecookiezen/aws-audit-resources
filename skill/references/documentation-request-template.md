@@ -20,6 +20,10 @@ section maps to which field.
 
 ---
 
+*Write every date in this document as YYYY-MM-DD (for example,
+2026-10-08). Other formats such as 10-08-2026 are ambiguous between
+countries and can't be transcribed into `exceptions.json`.*
+
 ## 1. Engagement information
 
 | Field | Response |
@@ -27,10 +31,10 @@ section maps to which field.
 | AWS Account ID(s) in scope | |
 | Framework being audited (CIS / Well-Architected / SOC 2 / ISO 27001) | |
 | Requested by (auditor name) | |
-| Request date | |
-| Response due date | |
+| Request date (YYYY-MM-DD) | |
+| Response due date (YYYY-MM-DD) | |
 | Completed by (name, title) | |
-| Response date | |
+| Response date (YYYY-MM-DD) | |
 
 ## 2. AWS Organizations root access management
 
@@ -66,7 +70,7 @@ ticket documenting its creation, or — for an IAM Identity Center
 permission set — who is assigned it. "It's always been like that" isn't
 evidence.*
 
-| Role/user name or pattern | Policy held | Purpose / justification | Evidence | Owner / approver | Last reviewed | Review cadence |
+| Role/user name or pattern | Policy held | Purpose / justification | Evidence | Owner / approver | Last reviewed (YYYY-MM-DD) | Review cadence |
 |---|---|---|---|---|---|---|
 | | | | | | | |
 | | | | | | | |
@@ -99,10 +103,11 @@ column blank; the auditor fills it in.*
 *For Current state, describe how the resource actually falls short today,
 specifically enough that the auditor can check it against what the audit
 finds. The acceptance covers that state only: if the audit finds something
-worse, it isn't covered. Use YYYY-MM-DD for dates. The first row is an
+worse, it isn't covered. Both dates must be YYYY-MM-DD; a Review-by
+date in any other format can't be recorded. The first row is an
 example; replace or delete it.*
 
-| Finding / control area | Resource(s) | Current state (how it falls short) | Compensating control or justification | Owner / approver | Approval date | Review-by date | Check ID *(auditor)* |
+| Finding / control area | Resource(s) | Current state (how it falls short) | Compensating control or justification | Owner / approver | Approval date (YYYY-MM-DD) | Review-by date (YYYY-MM-DD) | Check ID *(auditor)* |
 |---|---|---|---|---|---|---|---|
 | *Example: S3 MFA Delete* | *`acme-tfstate-prod`, `acme-tfstate-dev`* | *MFA Delete disabled; versioning enabled* | *Object Lock (governance mode, 30-day retention); an SCP denies `s3:PutBucketVersioning` outside the deploy role* | *Jane Doe, Platform Lead* | *2026-10-01* | *2027-04-01* | |
 | | | | | | | | |
@@ -128,4 +133,4 @@ the audit's evidence package (not hidden from the report) — see
 |---|---|
 | Name | |
 | Title | |
-| Date | |
+| Date (YYYY-MM-DD) | |
