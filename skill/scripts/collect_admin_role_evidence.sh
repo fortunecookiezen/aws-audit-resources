@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
 #
-# collect_admin_role_evidence.sh - record evidence that the AWS-created admin
-# roles in an AWS Organizations member account (OrganizationAccountAccessRole,
-# service-managed StackSets "stacksets-exec-<hash>" execution roles) are what
-# they claim to be: who can assume them, what they hold, and why they exist.
+# collect_admin_role_evidence.sh - record evidence that the admin roles AWS
+# services create in an AWS Organizations member account are what they claim
+# to be: who can assume them, what they hold, and why they exist. Covers
+# OrganizationAccountAccessRole, service-managed StackSets
+# "stacksets-exec-<hash>" execution roles, and IAM Identity Center
+# "AWSReservedSSO_<permission set>_<hash>" roles.
 #
 # Two halves, run in two places (AWS CloudShell, or any shell with the AWS CLI
 # and jq):
@@ -11,18 +13,24 @@
 #   member [role-name ...]
 #       Run in the audited member account (the CrossAccountSecurityAuditRole's
 #       SecurityAudit policy is enough). Records each role's trust policy,
-#       CreateDate, RoleLastUsed, attached and inline policies. With no role
-#       names, it records OrganizationAccountAccessRole plus every role whose
-#       name starts with "stacksets-exec-".
+#       CreateDate, RoleLastUsed, attached policies, and inline policies
+#       including their full documents. With no role names, it records
+#       OrganizationAccountAccessRole, every role whose name starts with
+#       "stacksets-exec-", and every IAM Identity Center role (path
+#       /aws-reserved/sso.amazonaws.com/).
 #
 #   management <member-account-id>
 #       Run in the Organizations management account. Records how the member
 #       account joined (JoinedMethod CREATED means Organizations created
 #       OrganizationAccountAccessRole; INVITED means someone created it by
 #       hand), whether StackSets trusted access is enabled, and which
-#       service-managed StackSets have instances in the member account.
+#       service-managed StackSets have instances in the member account. It
+#       also records every IAM Identity Center permission set provisioned to
+#       the member account: its managed and inline policies, and who is
+#       assigned it - users by user name, groups by name with their members.
 #       From a StackSets delegated administrator account instead, set
-#       CALL_AS=DELEGATED_ADMIN.
+#       CALL_AS=DELEGATED_ADMIN; Identity Center calls also work from its
+#       delegated administrator account.
 #
 # Usage:
 #     bash collect_admin_role_evidence.sh member [role-name ...]
@@ -70,7 +78,7 @@ aws_json() {
   if out="$(aws "$@" --output json 2>"$err_file")"; then
     if [ -n "$out" ]; then printf '%s' "$out"; else printf '{}'; fi
   else
-    jq -n --arg e "$(tr '\n' ' ' <"$err_file")" '{error: $e}'
+    jq -n --arg e "$(tr '\n' ' ' <"$err_file" | sed 's/ *$//')" '{error: $e}'
   fi
 }
 
@@ -88,26 +96,33 @@ write_evidence() {
 }
 
 collect_member() {
-  local roles=("$@") role get attached inline entries="[]"
+  local roles=("$@") role get attached inline inline_docs pname doc entries="[]"
   if [ "${#roles[@]}" -eq 0 ]; then
     roles=(OrganizationAccountAccessRole)
     while IFS= read -r role; do
       [ -n "$role" ] && roles+=("$role")
     done < <(aws iam list-roles --output json \
-               --query "Roles[?starts_with(RoleName, 'stacksets-exec-')].RoleName" | jq -r '.[]')
+               --query "Roles[?starts_with(RoleName, 'stacksets-exec-') || starts_with(Path, '/aws-reserved/sso.amazonaws.com/')].RoleName" | jq -r '.[]')
   fi
 
   for role in "${roles[@]}"; do
     get="$(aws_json iam get-role --role-name "$role")"
     attached="$(aws_json iam list-attached-role-policies --role-name "$role")"
     inline="$(aws_json iam list-role-policies --role-name "$role")"
+    inline_docs="[]"
+    while IFS= read -r pname; do
+      [ -n "$pname" ] || continue
+      doc="$(aws_json iam get-role-policy --role-name "$role" --policy-name "$pname")"
+      inline_docs="$(jq --arg n "$pname" --argjson d "$doc" \
+        '. + [{policy_name: $n, document: ($d.PolicyDocument // $d)}]' <<<"$inline_docs")"
+    done < <(jq -r '.PolicyNames[]?' <<<"$inline")
     entries="$(jq \
-      --arg name "$role" --argjson get "$get" --argjson attached "$attached" --argjson inline "$inline" \
+      --arg name "$role" --argjson get "$get" --argjson attached "$attached" --argjson inline "$inline_docs" \
       '. + [{
          role_name: $name,
          role: ($get.Role // $get),
          attached_policies: ($attached.AttachedPolicies // $attached),
-         inline_policy_names: ($inline.PolicyNames // $inline)
+         inline_policies: $inline
        }]' <<<"$entries")"
   done
 
@@ -116,12 +131,68 @@ collect_member() {
   echo
   jq -r '.[] |
     if .role.error then "\(.role_name): NOT FOUND or not readable - \(.role.error)"
-    else "\(.role_name): trusted by \([.role.AssumeRolePolicyDocument.Statement[]?.Principal | if type == "object" then (to_entries[].value | if type == "array" then .[] else . end) else . end] | join(", ")); policies: \([.attached_policies[]?.PolicyName] | join(", ")); created \(.role.CreateDate); last used \(.role.RoleLastUsed.LastUsedDate // "never/unknown")"
+    else "\(.role_name): trusted by \([.role.AssumeRolePolicyDocument.Statement[]?.Principal | if type == "object" then (to_entries[].value | if type == "array" then .[] else . end) else . end] | join(", ")); policies: \([.attached_policies[]?.PolicyName] + [.inline_policies[]? | "\(.policy_name) (inline\(if ([.document.Statement] | flatten | map(select(.Effect == "Allow" and ([.Action] | flatten | index("*")) and ([.Resource] | flatten | index("*")))) | length) > 0 then ", grants *:*" else "" end))"] | join(", ")); created \(.role.CreateDate); last used \(.role.RoleLastUsed.LastUsedDate // "never/unknown")"
     end' <<<"$entries"
 }
 
+# collect_sso <member-account-id>: JSON describing every Identity Center
+# permission set provisioned to the account and who is assigned it.
+collect_sso() {
+  local member_account="$1" instances instance_arn store_id ps_arns ps_arn ps managed inline assignments
+  local principals ptype pid principal members member_ids mid result="[]"
+  instances="$(aws_json sso-admin list-instances)"
+  if jq -e '.error or ((.Instances // []) | length == 0)' >/dev/null <<<"$instances"; then
+    jq -n --argjson i "$instances" '{error: ($i.error // "no IAM Identity Center instance found")}'
+    return
+  fi
+  instance_arn="$(jq -r '.Instances[0].InstanceArn' <<<"$instances")"
+  store_id="$(jq -r '.Instances[0].IdentityStoreId' <<<"$instances")"
+  ps_arns="$(aws_json sso-admin list-permission-sets-provisioned-to-account --instance-arn "$instance_arn" --account-id "$member_account")"
+
+  while IFS= read -r ps_arn; do
+    [ -n "$ps_arn" ] || continue
+    ps="$(aws_json sso-admin describe-permission-set --instance-arn "$instance_arn" --permission-set-arn "$ps_arn")"
+    managed="$(aws_json sso-admin list-managed-policies-in-permission-set --instance-arn "$instance_arn" --permission-set-arn "$ps_arn")"
+    inline="$(aws_json sso-admin get-inline-policy-for-permission-set --instance-arn "$instance_arn" --permission-set-arn "$ps_arn")"
+    assignments="$(aws_json sso-admin list-account-assignments --instance-arn "$instance_arn" --account-id "$member_account" --permission-set-arn "$ps_arn")"
+
+    principals="[]"
+    while IFS=$'\t' read -r ptype pid; do
+      [ -n "$pid" ] || continue
+      if [ "$ptype" = "USER" ]; then
+        principal="$(aws_json identitystore describe-user --identity-store-id "$store_id" --user-id "$pid")"
+        principal="$(jq --arg t "$ptype" --arg id "$pid" '{type: $t, id: $id, user_name: (.UserName // null), display_name: (.DisplayName // null), error: (.error // null)}' <<<"$principal")"
+      else
+        principal="$(aws_json identitystore describe-group --identity-store-id "$store_id" --group-id "$pid")"
+        member_ids="$(aws_json identitystore list-group-memberships --identity-store-id "$store_id" --group-id "$pid")"
+        members="[]"
+        while IFS= read -r mid; do
+          [ -n "$mid" ] || continue
+          members="$(jq --argjson u "$(aws_json identitystore describe-user --identity-store-id "$store_id" --user-id "$mid")" \
+            '. + [$u.UserName // ("unresolved user " + ($u.error // "?"))]' <<<"$members")"
+        done < <(jq -r '.GroupMemberships[]?.MemberId.UserId // empty' <<<"$member_ids")
+        principal="$(jq --arg t "$ptype" --arg id "$pid" --argjson m "$members" '{type: $t, id: $id, group_name: (.DisplayName // null), members: $m, error: (.error // null)}' <<<"$principal")"
+      fi
+      principals="$(jq --argjson p "$principal" '. + [$p]' <<<"$principals")"
+    done < <(jq -r '.AccountAssignments[]? | [.PrincipalType, .PrincipalId] | @tsv' <<<"$assignments")
+
+    result="$(jq --argjson ps "$ps" --argjson managed "$managed" --argjson inline "$inline" --argjson principals "$principals" --arg arn "$ps_arn" \
+      '. + [{
+         permission_set_arn: $arn,
+         name: ($ps.PermissionSet.Name // null),
+         session_duration: ($ps.PermissionSet.SessionDuration // null),
+         managed_policies: ($managed.AttachedManagedPolicies // $managed),
+         inline_policy: (if ($inline.InlinePolicy // "") == "" then null else ($inline.InlinePolicy | fromjson? // $inline.InlinePolicy) end),
+         assigned_to: $principals
+       }]' <<<"$result")"
+  done < <(jq -r '.PermissionSets[]?' <<<"$ps_arns")
+
+  jq -n --arg instance "$instance_arn" --arg store "$store_id" --argjson sets "$result" --argjson raw "$ps_arns" \
+    '{instance_arn: $instance, identity_store_id: $store, permission_sets: $sets} + (if $raw.error then {error: $raw.error} else {} end)'
+}
+
 collect_management() {
-  local member_account="${1:-}" call_as="${CALL_AS:-SELF}" account service_access stack_sets instances="[]" name inst
+  local member_account="${1:-}" call_as="${CALL_AS:-SELF}" account service_access stack_sets instances="[]" name inst sso
   [[ "$member_account" =~ ^[0-9]{12}$ ]] || { echo "ERROR: management mode needs the 12-digit member account ID." >&2; usage; }
 
   account="$(aws_json organizations describe-account --account-id "$member_account")"
@@ -141,15 +212,18 @@ collect_management() {
       '. + [{stack_set_name: $name, instances: ($inst.Summaries // $inst)}]' <<<"$instances")"
   done < <(jq -r '.Summaries[]? | select(.PermissionModel == "SERVICE_MANAGED") | .StackSetName' <<<"$stack_sets")
 
+  sso="$(collect_sso "$member_account")"
+
   write_evidence "management-${member_account}" "$(jq -n \
     --arg member "$member_account" --argjson account "$account" --argjson access "$service_access" \
-    --argjson stack_sets "$stack_sets" --argjson instances "$instances" \
+    --argjson stack_sets "$stack_sets" --argjson instances "$instances" --argjson sso "$sso" \
     '{mode: "management",
       member_account_id: $member,
       member_account: ($account.Account // $account),
       enabled_service_principals: ($access.EnabledServicePrincipals // $access),
       service_managed_stack_sets: [($stack_sets.Summaries // [])[] | select(.PermissionModel == "SERVICE_MANAGED")],
-      stack_instances_in_member_account: [$instances[] | select((.instances | type) != "array" or (.instances | length) > 0)]}')"
+      stack_instances_in_member_account: [$instances[] | select((.instances | type) != "array" or (.instances | length) > 0)],
+      identity_center: $sso}')"
 
   echo
   jq -r '"Account \(.Id) (\(.Name)) joined the organization by \(.JoinedMethod) on \(.JoinedTimestamp)."' <<<"$(jq '.Account // .' <<<"$account")"
@@ -163,6 +237,9 @@ collect_management() {
   fi
   jq -r 'if length == 0 then "No ACTIVE service-managed StackSet has instances in this account - a stacksets-exec role here may be left over."
          else .[] | "StackSet \(.stack_set_name) has instance(s) in this account." end' <<<"$instances"
+  jq -r 'if .error then "WARNING: Identity Center not recorded: \(.error)"
+         else .permission_sets[] | "Permission set \(.name): policies \([.managed_policies[]?.Name] + (if .inline_policy then ["inline"] else [] end) | join(", ")); assigned to \([.assigned_to[] | if .type == "USER" then "user \(.user_name // .id)" else "group \(.group_name // .id) (\(.members | join(", ")))" end] | join("; "))"
+         end' <<<"$sso"
 }
 
 case "$mode" in
