@@ -17,7 +17,7 @@ Master list of the automated checks this skill runs. Each row maps one `check_id
 | `iam_permissions_via_group_only` | IAM | Low | 2.13 | SEC02-BP06 | CC6.3 | A.5.15 |
 | `iam_no_full_admin_policy`¹ | IAM | High | 2.14 | SEC03-BP02 | CC6.3 | A.5.15, A.8.2 |
 | `iam_support_role_exists` | IAM | Low | 2.15 | SEC02-BP02 | CC6.2 | A.8.2 |
-| `s3_block_public_access` | S3 | Critical | 3.1.4 | SEC03-BP07 | CC6.1, CC6.6 | A.5.15 |
+| `s3_block_public_access` | S3 | Critical³ | 3.1.4 | SEC03-BP07 | CC6.1, CC6.6 | A.5.15 |
 | `s3_bucket_https_only` | S3 | Medium | 3.1.1 | SEC08-BP04 | CC6.7 | A.8.24 |
 | `s3_bucket_mfa_delete` | S3 | Low | 3.1.2 | SEC08-BP04 | CC6.7 | A.8.24 |
 | `s3_bucket_logging_enabled` | S3 | Medium | 4.8, 4.9 | SEC04-BP01 | CC7.1 | A.8.15 |
@@ -37,6 +37,8 @@ Master list of the automated checks this skill runs. Each row maps one `check_id
 ¹ Supports `--exceptions` — can resolve to `"pass"` (root checks, including `iam_credentials_unused_45d` for the root row only, via AWS Organizations centralized root access management) or `"accepted"` (`iam_no_full_admin_policy`, via a named admin-principal match) instead of `"fail"`. A root-management claim is only applied when it's corroborated by the actual collected data (no login profile, no access keys, no MFA device) — see `references/exceptions-and-exclusions.md`.
 
 ² Best-practice-only check: no CIS AWS Foundations Benchmark v7.0.0, SOC 2, or ISO 27001 control specifically requires deleting a region's default VPC (the `—` cells above aren't missing data, they're "this framework doesn't have a control for this"). It still runs and is reported under every framework, with that absence stated plainly in the report rather than a fabricated control ID — see `references/remediation-and-retesting.md`, "Findings outside the audited framework's scope."
+
+³ Critical by default, but a bucket whose own Block Public Access setting is missing or incomplete is rated **Low** when the account-level setting has all four flags on: the account-level setting overrides bucket settings, so the bucket can't be made public. It still fails 3.1.4, which requires both levels; the evidence says why it's Low. This is the only check whose severity varies by result.
 
 ## Manual/extended checks (not automated in v1)
 

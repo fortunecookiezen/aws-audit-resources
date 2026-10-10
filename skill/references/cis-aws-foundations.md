@@ -234,6 +234,7 @@ Every control below lists a `Checks:` line — this is the internal check-ID Pro
 ### 3.1.4 — Ensure S3 Block Public Access is enabled (account + bucket)
 - **Level:** 1 | **Checks:** `s3_bucket_level_public_access_block`, `s3_account_level_public_access_blocks`
 - **Pass/Fail:** Pass if both the account-level and every bucket-level Block Public Access setting have all four flags (`BlockPublicAcls`, `IgnorePublicAcls`, `BlockPublicPolicy`, `RestrictPublicBuckets`) set to `true`. Fail if any flag is `false` at either level, or the setting is entirely absent.
+- **Severity:** Critical, except for a bucket whose own setting is missing or incomplete while the account-level setting has all four flags on. The account-level setting overrides bucket settings, so that bucket can't be made public; it still fails 3.1.4, but `run_checks.py` rates it Low and says why in the evidence.
 - **AWS CLI:**
   ```bash
   aws s3control get-public-access-block --account-id <account-id>

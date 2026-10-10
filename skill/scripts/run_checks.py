@@ -896,21 +896,40 @@ def check_iam_support_role_exists(snap):
 
 
 def check_s3_block_public_access(snap):
+    """CIS 3.1.4 requires all four Block Public Access flags at both the
+    account and the bucket level, so a bucket missing them still fails. But
+    when the account-level setting has all four on, it overrides bucket
+    settings and the bucket can't be made public; the bucket-level gap is
+    then defense in depth, not exposure, and is reported as Low (a per-result
+    severity) instead of the check's Critical."""
+    flags = ("BlockPublicAcls", "IgnorePublicAcls", "BlockPublicPolicy", "RestrictPublicBuckets")
     s3 = snap.get("s3", {})
     results = []
     account_pab = s3.get("account_public_access_block")
+    account_blocks_all = account_pab is not None and all(account_pab.get(f) for f in flags)
     if account_pab is not None:
-        all_true = all(account_pab.get(f) for f in ("BlockPublicAcls", "IgnorePublicAcls", "BlockPublicPolicy", "RestrictPublicBuckets"))
-        results.append({"resource": "account", "status": "pass" if all_true else "fail", "evidence": str(account_pab)})
+        results.append({"resource": "account", "status": "pass" if account_blocks_all else "fail", "evidence": str(account_pab)})
+    covered = (
+        " Account-level Block Public Access has all four settings on and overrides bucket settings, "
+        "so this bucket can't be made public; the missing bucket-level setting is defense in depth, "
+        "rated Low rather than Critical."
+    )
     buckets = s3.get("buckets")
     if buckets is not None:
         for b in buckets:
             pab = b.get("public_access_block")
-            if pab is None:
-                results.append({"resource": b["name"], "status": "fail", "evidence": "No bucket-level Block Public Access configuration."})
+            if pab is not None and all(pab.get(f) for f in flags):
+                results.append({"resource": b["name"], "status": "pass", "evidence": str(pab)})
                 continue
-            all_true = all(pab.get(f) for f in ("BlockPublicAcls", "IgnorePublicAcls", "BlockPublicPolicy", "RestrictPublicBuckets"))
-            results.append({"resource": b["name"], "status": "pass" if all_true else "fail", "evidence": str(pab)})
+            result = {
+                "resource": b["name"],
+                "status": "fail",
+                "evidence": "No bucket-level Block Public Access configuration." if pab is None else str(pab),
+            }
+            if account_blocks_all:
+                result["severity"] = "Low"
+                result["evidence"] += covered
+            results.append(result)
     return results or None
 
 
@@ -1147,7 +1166,10 @@ def run(snapshot, framework, exceptions=None):
                 "check_id": check_id,
                 "title": meta["title"],
                 "area": meta["area"],
-                "severity": meta["severity"],
+                # A check can rate an individual result differently from its
+                # default (e.g. s3_block_public_access when the account-level
+                # setting already covers the bucket).
+                "severity": r.get("severity", meta["severity"]),
                 "remediation": meta["remediation"],
                 "refs": meta["refs"] if framework == "all" else {framework: meta["refs"].get(framework)},
                 "resource": r["resource"],
