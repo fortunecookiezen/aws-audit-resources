@@ -6,9 +6,10 @@ documentation up front"). The goal is to capture what's *already known and
 intentional* — centrally-managed root credentials, named admin roles,
 anything else you'd otherwise discover as a false positive after the
 report is written — so it can go into the exceptions file from the first
-run instead of a correction pass. Delete this intro paragraph and the
-instructions in *italics* before sending; everything else is meant to be
-filled in and returned.
+run instead of a correction pass. Before sending, delete this intro block
+(the two paragraphs between the title and the horizontal line); the title
+and everything below the line go to the account/engagement owner. Keep the instructions in *italics* in each
+section, which tell the owner what to fill in and how.
 
 When the completed response comes back, the auditor saves it as
 `audit-runs/<account_id>-<YYYYMMDD>/documentation-request-response.md` (or
