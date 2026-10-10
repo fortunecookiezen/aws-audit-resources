@@ -68,8 +68,12 @@ in advance should cover the majority of an account's known exceptions.
      management account (or let the audit role's own auto-detection confirm
      it, if it's running with delegated-admin privileges — check
      `organization.root_credentials_management_queryable` in the snapshot).
-     If neither is available, the next best thing is a screenshot of the
-     Organizations console's root access management page, dated.
+     For the management-account check, use
+     `scripts/collect_root_management_evidence.sh` in CloudShell: it
+     records who ran the check and when, which become `attested_by` and
+     `attested_date`. If neither is available, the next best thing is a
+     screenshot of the Organizations console's root access management page,
+     showing the date and the signed-in identity.
    - *A named admin principal*: the role/user's actual name or ARN, and a
      one-line reason it's supposed to hold broad access (break-glass access,
      an AWS-managed automation construct like a StackSets exec role or

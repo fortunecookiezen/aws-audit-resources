@@ -50,7 +50,7 @@ which most audits don't have.*
 | Is this account part of an AWS Organization? | Yes / No / Unsure |
 | If yes, is centralized Root Access Management (`RootCredentialsManagement`) enabled for this account? | Yes / No / Unsure |
 | Who can independently confirm this from the Organizations management account (name, how to reach them)? | |
-| Evidence attached or referenced (`aws iam list-organizations-features` output, console screenshot, ticket) | |
+| Evidence attached: the file produced by running the auditor's `collect_root_management_evidence.sh` in AWS CloudShell in the Organizations management account. Without the script, attach `aws sts get-caller-identity` and `aws iam list-organizations-features` output from the same session, plus the date (YYYY-MM-DD) it was run. | |
 | What is this account's expected root-credential review cadence, if root is *not* centrally managed (e.g. quarterly = 90 days, annual = 365 days)? | |
 | Is there any legitimate, expected root-account usage (e.g. a documented break-glass procedure)? If so, describe it. | |
 
@@ -105,7 +105,9 @@ specifically enough that the auditor can check it against what the audit
 finds. The acceptance covers that state only: if the audit finds something
 worse, it isn't covered. Both dates must be YYYY-MM-DD; a Review-by
 date in any other format can't be recorded. The first row is an
-example; replace or delete it.*
+example; replace or delete it. If there are no other accepted risks,
+write "None" in the first column of the first empty row — a section left
+blank is treated as not answered.*
 
 | Finding / control area | Resource(s) | Current state (how it falls short) | Compensating control or justification | Owner / approver | Approval date (YYYY-MM-DD) | Review-by date (YYYY-MM-DD) | Check ID *(auditor)* |
 |---|---|---|---|---|---|---|---|

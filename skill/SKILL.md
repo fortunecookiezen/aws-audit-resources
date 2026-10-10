@@ -140,4 +140,5 @@ A report only becomes `FINAL` through this explicit step — never by editing th
 - `scripts/collect_aws_data.py` — boto3 collector; supports `--profile`, `--role-arn`/`--role-session-name` (assume-role), `--regions`/`--all-regions`, `-o/--output`
 - `scripts/run_checks.py` — evaluates a snapshot against one framework; `snapshot.json --framework {cis|well_architected|soc2|iso27001|all} [--exceptions exceptions.json] -o findings.json`
 - `scripts/build_report.py` — builds the Step 4 Word report from a findings file plus `engagement-info.md`; `findings.json [--label retest-1] [--variant-note "..."] [--data-source "..."] [--snapshot snapshot.json] [--engagement-info path] [--out-dir dir]`
+- `scripts/collect_root_management_evidence.sh` — run in AWS CloudShell in the Organizations management account to record who confirmed centralized root access management, when, and the result, as one JSON file for `evidence/`; `[output-dir]`
 - `scripts/diff_findings.py` — compares a baseline and a retest findings.json per check/resource (not just summary counts) for the Step 5 remediation workflow; `findings-baseline.json findings-retest.json [-o diff.json]`

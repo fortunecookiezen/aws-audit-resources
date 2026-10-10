@@ -39,10 +39,14 @@ where that's expected to fail, not a bug to chase. When it does succeed, the
 result is captured in the snapshot's `organization.root_credentials_management_enabled`
 field and `run_checks.py` uses it automatically — no exceptions file needed.
 
-When it can't be auto-detected, confirm it out-of-band (ask whoever has
-access to the management account to run `aws iam list-organizations-features`,
-or check the AWS Organizations console's root access management page) and
-record that confirmation in the exceptions file. The collector also records
+When it can't be auto-detected, confirm it out-of-band and record that
+confirmation in the exceptions file. The preferred evidence is the file
+written by `scripts/collect_root_management_evidence.sh`, run in AWS
+CloudShell in the management account: it records when it ran, who ran it
+(`sts get-caller-identity`) and the result (`iam list-organizations-features`)
+in one file. A screenshot of the Organizations console's root access
+management page is a weaker fallback; it needs to show the date and the
+signed-in identity. The collector also records
 org membership itself (`organization.in_organization`, `organization.organization_id`,
 `organization.management_account_id`) from `organizations:DescribeOrganization`,
 which *is* callable from a member account — useful context for deciding
@@ -187,9 +191,10 @@ directory) becomes `exceptions.json`:
 
 | Template section | `exceptions.json` |
 |---|---|
-| §2 Root Access Management = **Yes**, *and* independently confirmed (see "What's auto-detected vs. what needs attestation") | `root_credentials_centrally_managed`: `attested: true`, `attested_by` = whoever confirmed it, `attested_date`, `note` citing the evidence file under `evidence/` and the owner's sign-off. A "Yes" with no independent confirmation is **not** enough — leave the block out and follow up. |
+| §2 Root Access Management = **Yes**, *and* independently confirmed (see "What's auto-detected vs. what needs attestation") | `root_credentials_centrally_managed`: `attested: true`; `attested_by` = the person identified in the evidence's caller identity (the `caller_identity.Arn` session name in `collect_root_management_evidence.sh` output) — **not** the "who can independently confirm" contact in the response, which is only who to ask; `attested_date` = the date the evidence was collected (`collected_at`, as YYYY-MM-DD); `note` citing the evidence file under `evidence/` and the owner's sign-off. If the evidence doesn't show who ran the check and when, or `organizations_features` doesn't list `RootCredentialsManagement`, leave the block out and follow up. |
 | §2 root-credential review cadence | `root_routine_use_window_days` (quarterly → `90`, semi-annual → `180`, annual → `365`). Omit for the default of 365. |
 | §3 each admin role/user row | One `accepted_admin_principals` entry. Name or pattern → `pattern` (anchor exact names with `^...$`; use a prefix pattern such as `^AWSReservedSSO_AdministratorAccess_` for AWS-generated suffixes). Purpose / justification, Evidence, owner/approver, and last-reviewed → `note`. A row with no evidence isn't transcribed until the owner supplies it. Every row of the category checklist below the table must be answered; a blank row is a question to send back, not a "None." |
+| §4 "None" | Nothing to transcribe. A §4 left entirely blank is a question to send back, not a "None." |
 | §4 each other accepted-risk row | One `accepted_findings` entry. The auditor fills in **Check ID** and the resource pattern from `findings.json` / `check-catalog.md`; Current state, then Compensating control or justification → `note` (e.g. "MFA Delete disabled; versioning enabled. Object Lock …"), after checking the stated state against `findings.json` — if a matched resource is in a worse state than described, leave it out of the rule; Owner / approver → `approved_by`; Approval date → `approved_date`; Review-by date → `review_by`. A row about a root or admin-policy finding belongs in §2 or §3 instead. A row with no review-by date, or for a risk nobody can explain, isn't transcribed — see "What not to accept." |
 | §1, §5, §6 (engagement info, contacts, sign-off) | Not transcribed. Contacts and dates belong in `engagement-info.md`; the sign-off stays in the saved response as the record of who approved the entries above. |
 
