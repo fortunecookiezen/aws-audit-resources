@@ -9,6 +9,7 @@ that scripts/run_checks.py can evaluate against a chosen compliance framework.
 Usage:
     # From the skill/ directory, in a virtual environment (never the system Python):
     python3 -m venv .venv && source .venv/bin/activate
+    # Python >= 3.10. On macOS, /usr/bin/python3 is 3.9: use /opt/homebrew/bin/python3 -m venv .venv
     pip install -r requirements.txt
 
     # Using credentials already in the environment / a named profile:
