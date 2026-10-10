@@ -31,7 +31,8 @@ Building a FINAL report prints a WARNING for anything the finalization
 checklist says must be settled first (open "fail" findings, "Pending"
 Testing Narrative rows, blank auditor fields). It still builds, so the
 warnings can be reviewed against the output, but a FINAL with warnings
-isn't ready to deliver.
+isn't ready to deliver. Any build also warns about a Testing Narrative date
+that isn't YYYY-MM-DD, since dates are printed exactly as written.
 """
 
 import argparse
@@ -568,6 +569,25 @@ def setup_document(ctx):
     return doc
 
 
+def date_warnings(ctx):
+    """Testing Narrative dates are printed exactly as written, so flag any
+    that aren't YYYY-MM-DD (engagement-info-template.md)."""
+    warnings = []
+    for m in ctx["milestones"]:
+        if m["date"] and not re.fullmatch(r"\d{4}-\d{2}-\d{2}", m["date"]):
+            warnings.append(
+                f"Testing Narrative \"{m['milestone']}\" date {m['date']!r} is not YYYY-MM-DD; "
+                "it is printed as written. Fix it in engagement-info.md."
+            )
+            continue
+        if m["date"]:
+            try:
+                datetime.strptime(m["date"], "%Y-%m-%d")
+            except ValueError:
+                warnings.append(f"Testing Narrative \"{m['milestone']}\" date {m['date']!r} is not a real date.")
+    return warnings
+
+
 def finalization_warnings(ctx):
     if ctx["status"] != "FINAL":
         return []
@@ -641,7 +661,7 @@ def build(args):
     out_dir = args.out_dir or engagement_dir
     out_path = os.path.join(out_dir, output_filename(summary.get("account_id"), framework, args.label, ctx["status"]))
     doc.save(out_path)
-    return out_path, finalization_warnings(ctx)
+    return out_path, date_warnings(ctx) + finalization_warnings(ctx)
 
 
 def main():

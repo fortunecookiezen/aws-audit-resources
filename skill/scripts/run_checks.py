@@ -461,6 +461,32 @@ ACCEPTED_FINDINGS_FORBIDDEN_CHECKS = {
     "iam_no_full_admin_policy",
 }
 ACCEPTED_FINDINGS_REQUIRED_FIELDS = ("check_id", "resource", "note", "approved_by", "approved_date", "review_by")
+ISO_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
+def _parse_iso_date(value):
+    """Return a date for a strict YYYY-MM-DD string, else None. Stricter than
+    date.fromisoformat, which also accepts forms like 20270401."""
+    if not isinstance(value, str) or not ISO_DATE_RE.match(value):
+        return None
+    try:
+        return datetime.strptime(value, "%Y-%m-%d").date()
+    except ValueError:
+        return None
+
+
+def _validate_root_attestation(exceptions):
+    """Drop a root_credentials_centrally_managed attestation whose
+    attested_date isn't YYYY-MM-DD, so an undated claim is never applied.
+    Returns (exceptions, warnings); the input dict is not modified."""
+    attestation = (exceptions or {}).get("root_credentials_centrally_managed") or {}
+    if attestation.get("attested") is not True or _parse_iso_date(attestation.get("attested_date")):
+        return exceptions, []
+    cleaned = {k: v for k, v in exceptions.items() if k != "root_credentials_centrally_managed"}
+    return cleaned, [
+        f"root_credentials_centrally_managed not applied: attested_date "
+        f"{attestation.get('attested_date')!r} is not a YYYY-MM-DD date."
+    ]
 
 
 def _validate_accepted_finding_rule(rule):
@@ -487,10 +513,9 @@ def _validate_accepted_finding_rule(rule):
         return f"resource pattern {pattern!r} matches an empty string; it's too broad"
     if check_id == "iam_credentials_unused_45d" and compiled.search("<root_account>"):
         return "the root row of iam_credentials_unused_45d can't be accepted this way; use root_credentials_centrally_managed"
-    try:
-        datetime.fromisoformat(rule["review_by"])
-    except ValueError:
-        return f"review_by {rule['review_by']!r} is not a YYYY-MM-DD date"
+    for field in ("approved_date", "review_by"):
+        if not _parse_iso_date(rule[field]):
+            return f"{field} {rule[field]!r} is not a YYYY-MM-DD date"
     return None
 
 
@@ -510,7 +535,7 @@ def _apply_accepted_findings(findings, exceptions, snap):
         if reason:
             warnings.append(f"{label} not applied: {reason}.")
             continue
-        usable.append((label, rule, datetime.fromisoformat(rule["review_by"]).date()))
+        usable.append((label, rule, _parse_iso_date(rule["review_by"])))
 
     for label, rule, review_by in usable:
         check_id, pattern = rule["check_id"], rule["resource"]
@@ -1123,7 +1148,7 @@ CHECK_FUNCS = {
 
 
 def run(snapshot, framework, exceptions=None):
-    exceptions = exceptions or {}
+    exceptions, attestation_warnings = _validate_root_attestation(exceptions or {})
     findings = []
     checks_evaluated = []
     checks_skipped = []
@@ -1155,7 +1180,7 @@ def run(snapshot, framework, exceptions=None):
                 "evidence": r["evidence"],
             })
 
-    exceptions_warnings = _apply_accepted_findings(findings, exceptions, snapshot)
+    exceptions_warnings = attestation_warnings + _apply_accepted_findings(findings, exceptions, snapshot)
 
     failed = [f for f in findings if f["status"] == "fail"]
     passed = [f for f in findings if f["status"] == "pass"]
