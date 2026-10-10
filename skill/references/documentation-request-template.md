@@ -68,7 +68,12 @@ the role is recreated.*
 controlled: a runbook link, the IaC module that provisions the role, a
 ticket documenting its creation, or — for an IAM Identity Center
 permission set — who is assigned it. "It's always been like that" isn't
-evidence.*
+evidence. For the AWS-created roles (`OrganizationAccountAccessRole` and
+`stacksets-exec-<hash>`), cite the two files the auditor's
+`collect_admin_role_evidence.sh` produces — one run in this account, one
+in the Organizations management account — and summarize what they show
+(for example, "JoinedMethod CREATED; trust limited to management account
+111122223333").*
 
 | Role/user name or pattern | Policy held | Purpose / justification | Evidence | Owner / approver | Last reviewed (YYYY-MM-DD) | Review cadence |
 |---|---|---|---|---|---|---|

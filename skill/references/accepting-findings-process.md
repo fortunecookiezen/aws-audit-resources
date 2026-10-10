@@ -80,7 +80,24 @@ in advance should cover the majority of an account's known exceptions.
      `OrganizationAccountAccessRole`, a platform team's deployment role,
      etc.). "It's always been like that" is not evidence; a runbook link,
      an IaC module that provisions it, or a ticket documenting its creation
-     is.
+     is. For the AWS-created roles, `scripts/collect_admin_role_evidence.sh`
+     records the evidence: `member` mode, run in the audited account,
+     captures each role's trust policy and policies; `management` mode, run
+     in the management account, captures how the account joined the
+     organization and which service-managed StackSets target it. Check
+     that:
+     - `OrganizationAccountAccessRole` trusts only the management account,
+       and the account's `JoinedMethod` is `CREATED`. If it's `INVITED`,
+       someone created the role by hand, so it needs the same evidence as
+       any other admin role.
+     - each `stacksets-exec-<hash>` role trusts only
+       `AWSServiceRoleForCloudFormationStackSetsOrgAdmin` in the management
+       (or delegated-admin) account, and an ACTIVE service-managed StackSet
+       still has instances in this account. If none does, the role is left
+       over: remove it rather than accept it.
+
+     Any other principal in either trust policy is a finding, not an
+     exception.
    - *A longer root-reuse window*: the account's actual audit/review
      cadence (e.g., quarterly reviews justify a 90-day window; annual
      reviews justify 365).
