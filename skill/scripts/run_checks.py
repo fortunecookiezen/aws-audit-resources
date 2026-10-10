@@ -823,6 +823,13 @@ def check_iam_no_full_admin_policy(snap, exceptions=None):
     OrganizationAccountAccessRole or a documented break-glass role where
     full-admin access is a deliberate, reviewed decision rather than an
     oversight.
+
+    Inline policies (iam.inline_policies, recorded by collectors from this
+    version on) are evaluated the same way: each inline admin-wildcard grant
+    is a finding on the principal that holds it, matched against
+    accepted_admin_principals by principal name or ARN. An inline policy the
+    collector couldn't read is a finding too, since it can't be shown to be
+    safe. Snapshots without inline_policies evaluate as before.
     """
     iam = snap.get("iam", {})
     policies = iam.get("policies")
@@ -884,6 +891,33 @@ def check_iam_no_full_admin_policy(snap, exceptions=None):
                     "status": "fail",
                     "evidence": f"arn={p['arn']}, is_admin_wildcard=True, attached directly to {kind} '{name}'.",
                 })
+
+    for ip in iam.get("inline_policies") or []:
+        if ip.get("is_admin_wildcard") is False:
+            continue
+        kind, name, arn = ip["principal_type"], ip["principal_name"], ip.get("principal_arn")
+        resource = f"{ip['policy_name']} (inline) → {kind}:{name}"
+        if ip.get("is_admin_wildcard") is None:
+            results.append({
+                "resource": resource,
+                "status": "fail",
+                "evidence": f"principal={arn}. The collector could not read this inline policy, so it can't be shown not to grant full admin.",
+            })
+            continue
+        accepted = _match_accepted_admin_principal(name, arn, exceptions)
+        if accepted:
+            results.append({
+                "resource": resource,
+                "status": "accepted",
+                "evidence": f"principal={arn}, inline policy grants Action:*/Resource:*. Accepted: "
+                            f"{accepted.get('note', 'matches an accepted_admin_principals rule')} (pattern: {accepted.get('pattern')}).",
+            })
+        else:
+            results.append({
+                "resource": resource,
+                "status": "fail",
+                "evidence": f"principal={arn}, inline policy '{ip['policy_name']}' grants Action:*/Resource:* to {kind} '{name}'.",
+            })
     return results
 
 

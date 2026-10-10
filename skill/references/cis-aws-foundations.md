@@ -114,7 +114,7 @@ Every control below lists a `Checks:` line — this is the internal check-ID Pro
 
 ### 2.14 — Ensure IAM policies allowing full `*:*` admin privileges are not attached
 - **Level:** 1 | **Checks:** `iam_aws_attached_policy_no_administrative_privileges`, `iam_customer_attached_policy_no_administrative_privileges`
-- **Pass/Fail:** Pass if no managed policy (AWS-managed or customer-managed) that is currently attached to any user/group/role contains a statement with `"Effect": "Allow"`, `"Action": "*"`, `"Resource": "*"`. Fail if such a policy is attached anywhere (e.g., `AdministratorAccess` attached broadly, or a custom equivalent).
+- **Pass/Fail:** Pass if no managed policy (AWS-managed or customer-managed) that is currently attached to any user/group/role, and no inline policy on any user/group/role, contains a statement with `"Effect": "Allow"`, `"Action": "*"`, `"Resource": "*"`. Fail if such a policy is attached anywhere (e.g., `AdministratorAccess` attached broadly, or a custom equivalent), or embedded inline in a principal. Inline grants are easy to miss: they never appear in `list-policies`, so they have to be read per principal — a role a StackSet deploys with an inline `*:*` policy is a typical case. `collect_aws_data.py` records every inline policy (`iam.inline_policies`) with whether it grants `*:*`; an inline policy it couldn't read is reported as a failure, since it can't be shown to be safe. Service-linked roles are skipped (AWS manages their policies).
 - **AWS CLI:**
   ```bash
   aws iam list-policies --scope All --only-attached
@@ -123,8 +123,11 @@ Every control below lists a `Checks:` line — this is the internal check-ID Pro
   aws iam get-policy-version --policy-arn <arn> --version-id <ver>    # inspect Document.Statement
   # flag Statement entries where Effect=Allow, Action includes "*", Resource includes "*"
   aws iam list-entities-for-policy --policy-arn <arn>                # who it's attached to
+  # inline policies, per principal (repeat for users and groups):
+  aws iam list-role-policies --role-name <role>
+  aws iam get-role-policy --role-name <role> --policy-name <name>    # inspect PolicyDocument.Statement
   ```
-- **Remediation:** Detach the overly-broad policy from the user/group/role and replace it with a least-privilege custom policy scoped to the specific actions/resources actually required.
+- **Remediation:** Detach the overly-broad policy (or delete the inline policy) from the user/group/role and replace it with a least-privilege custom policy scoped to the specific actions/resources actually required. If the principal isn't used at all, remove it.
 
 ### 2.15 — Ensure a support role has been created to manage AWS Support incidents
 - **Level:** 1 | **Checks:** `iam_support_role_created`
