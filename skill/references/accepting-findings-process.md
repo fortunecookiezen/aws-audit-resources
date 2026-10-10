@@ -99,7 +99,11 @@ in advance should cover the majority of an account's known exceptions.
        over: remove it rather than accept it. Read the StackSet
        descriptions too: a StackSet that creates another admin role (a
        deployment or vendor role) means that role belongs in the request's
-       §3 table, not under "None".
+       §3 table, not under "None". `member` mode lists every role a
+       StackSet's stack created in the account, marked with the stack that
+       created it, so these roles appear in the evidence even when nobody
+       listed them. StackSet stacks are regional: set `STACK_REGIONS` to
+       every region the management-mode output shows instances in.
      - each `AWSReservedSSO_<name>_<hash>` role trusts only the account's
        `AWSSSO_…_DO_NOT_DELETE` SAML provider, and the matching permission
        set's assignments name the specific users and groups (with members)

@@ -16,8 +16,13 @@
 #       CreateDate, RoleLastUsed, attached policies, and inline policies
 #       including their full documents. With no role names, it records
 #       OrganizationAccountAccessRole, every role whose name starts with
-#       "stacksets-exec-", and every IAM Identity Center role (path
-#       /aws-reserved/sso.amazonaws.com/).
+#       "stacksets-exec-", every IAM Identity Center role (path
+#       /aws-reserved/sso.amazonaws.com/), and every IAM role created by a
+#       StackSet's stack in this account ("StackSet-*" stacks), so roles a
+#       StackSet deploys - a deployment role, a vendor's role - are captured
+#       and linked to the stack that created them. StackSet stacks are
+#       regional: it searches the CLI's configured region, or the regions in
+#       STACK_REGIONS (space-separated).
 #
 #   management <member-account-id>
 #       Run in the Organizations management account. Records how the member
@@ -35,6 +40,7 @@
 # Usage:
 #     bash collect_admin_role_evidence.sh member [role-name ...]
 #     bash collect_admin_role_evidence.sh management 111122223333
+#     STACK_REGIONS="us-east-1 us-west-2" bash collect_admin_role_evidence.sh member
 #     OUT_DIR=/some/dir bash collect_admin_role_evidence.sh ...   (default: .)
 #
 # Each run writes one admin-role-evidence-<mode>-<account>-<UTC timestamp>.json
@@ -95,14 +101,46 @@ write_evidence() {
   if command -v sha256sum >/dev/null 2>&1; then sha256sum "$out_file"; else shasum -a 256 "$out_file"; fi
 }
 
+# stackset_roles: JSON object {role-name: [{stack, region}]} for every IAM
+# role created by a "StackSet-*" stack in STACK_REGIONS (default: the CLI's
+# configured region). Lookups that fail are recorded under "_errors".
+stackset_roles() {
+  local regions region stacks stack res origin="{}"
+  regions="${STACK_REGIONS:-$(aws configure get region 2>/dev/null || true)}"
+  regions="${regions:-${AWS_REGION:-${AWS_DEFAULT_REGION:-us-east-1}}}"
+  for region in $regions; do
+    stacks="$(aws_json cloudformation list-stacks --region "$region" \
+      --stack-status-filter CREATE_COMPLETE UPDATE_COMPLETE UPDATE_ROLLBACK_COMPLETE IMPORT_COMPLETE \
+      --query "StackSummaries[?starts_with(StackName, 'StackSet-')].StackName")"
+    if jq -e 'type == "object" and .error' >/dev/null <<<"$stacks"; then
+      origin="$(jq --arg r "$region" --argjson e "$stacks" '._errors += [{region: $r, error: $e.error}]' <<<"$origin")"
+      continue
+    fi
+    while IFS= read -r stack; do
+      [ -n "$stack" ] || continue
+      res="$(aws_json cloudformation describe-stack-resources --region "$region" --stack-name "$stack" \
+        --query "StackResources[?ResourceType=='AWS::IAM::Role'].PhysicalResourceId")"
+      origin="$(jq --arg s "$stack" --arg r "$region" --argjson res "$res" '
+        if ($res | type) == "array"
+        then reduce $res[] as $role (.; .[$role] += [{stack: $s, region: $r}])
+        else ._errors += [{region: $r, stack: $s, error: $res.error}] end' <<<"$origin")"
+    done < <(jq -r '.[]' <<<"$stacks")
+  done
+  printf '%s' "$origin"
+}
+
 collect_member() {
-  local roles=("$@") role get attached inline inline_docs pname doc entries="[]"
+  local roles=("$@") role get attached inline inline_docs pname doc entries="[]" origin="{}"
   if [ "${#roles[@]}" -eq 0 ]; then
     roles=(OrganizationAccountAccessRole)
     while IFS= read -r role; do
       [ -n "$role" ] && roles+=("$role")
     done < <(aws iam list-roles --output json \
                --query "Roles[?starts_with(RoleName, 'stacksets-exec-') || starts_with(Path, '/aws-reserved/sso.amazonaws.com/')].RoleName" | jq -r '.[]')
+    origin="$(stackset_roles)"
+    while IFS= read -r role; do
+      [[ " ${roles[*]} " == *" $role "* ]] || roles+=("$role")
+    done < <(jq -r 'del(._errors) | keys[]' <<<"$origin")
   fi
 
   for role in "${roles[@]}"; do
@@ -118,21 +156,25 @@ collect_member() {
     done < <(jq -r '.PolicyNames[]?' <<<"$inline")
     entries="$(jq \
       --arg name "$role" --argjson get "$get" --argjson attached "$attached" --argjson inline "$inline_docs" \
+      --argjson origin "$origin" \
       '. + [{
          role_name: $name,
+         created_by_stackset_stacks: ($origin[$name] // []),
          role: ($get.Role // $get),
          attached_policies: ($attached.AttachedPolicies // $attached),
          inline_policies: $inline
        }]' <<<"$entries")"
   done
 
-  write_evidence "member-${caller_account}" "$(jq -n --argjson roles "$entries" '{mode: "member", roles: $roles}')"
+  write_evidence "member-${caller_account}" "$(jq -n --argjson roles "$entries" --argjson origin "$origin" \
+    '{mode: "member", roles: $roles} + (if $origin._errors then {stackset_lookup_errors: $origin._errors} else {} end)')"
 
   echo
   jq -r '.[] |
     if .role.error then "\(.role_name): NOT FOUND or not readable - \(.role.error)"
-    else "\(.role_name): trusted by \([.role.AssumeRolePolicyDocument.Statement[]?.Principal | if type == "object" then (to_entries[].value | if type == "array" then .[] else . end) else . end] | join(", ")); policies: \([.attached_policies[]?.PolicyName] + [.inline_policies[]? | "\(.policy_name) (inline\(if ([.document.Statement] | flatten | map(select(.Effect == "Allow" and ([.Action] | flatten | index("*")) and ([.Resource] | flatten | index("*")))) | length) > 0 then ", grants *:*" else "" end))"] | join(", ")); created \(.role.CreateDate); last used \(.role.RoleLastUsed.LastUsedDate // "never/unknown")"
+    else "\(.role_name)\(if (.created_by_stackset_stacks | length) > 0 then " [created by \(.created_by_stackset_stacks | map(.stack + " in " + .region) | join(", "))]" else "" end): trusted by \([.role.AssumeRolePolicyDocument.Statement[]?.Principal | if type == "object" then (to_entries[].value | if type == "array" then .[] else . end) else . end] | join(", ")); policies: \([.attached_policies[]?.PolicyName] + [.inline_policies[]? | "\(.policy_name) (inline\(if ([.document.Statement] | flatten | map(select(.Effect == "Allow" and ([.Action] | flatten | index("*")) and ([.Resource] | flatten | index("*")))) | length) > 0 then ", grants *:*" else "" end))"] | join(", ")); created \(.role.CreateDate); last used \(.role.RoleLastUsed.LastUsedDate // "never/unknown")"
     end' <<<"$entries"
+  jq -r '._errors[]? | "WARNING: StackSet role lookup failed in \(.region)\(if .stack then " for \(.stack)" else "" end): \(.error)"' <<<"$origin" >&2
 }
 
 # collect_sso <member-account-id>: JSON describing every Identity Center
