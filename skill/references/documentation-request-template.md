@@ -6,9 +6,10 @@ documentation up front"). The goal is to capture what's *already known and
 intentional* — centrally-managed root credentials, named admin roles,
 anything else you'd otherwise discover as a false positive after the
 report is written — so it can go into the exceptions file from the first
-run instead of a correction pass. Delete this intro paragraph and the
-instructions in *italics* before sending; everything else is meant to be
-filled in and returned.
+run instead of a correction pass. Before sending, delete this intro block
+(the two paragraphs between the title and the horizontal line); the title
+and everything below the line go to the account/engagement owner. Keep the instructions in *italics* in each
+section, which tell the owner what to fill in and how.
 
 When the completed response comes back, the auditor saves it as
 `audit-runs/<account_id>-<YYYYMMDD>/documentation-request-response.md` (or
@@ -19,6 +20,10 @@ section maps to which field.
 
 ---
 
+*Write every date in this document as YYYY-MM-DD (for example,
+2026-10-08). Other formats such as 10-08-2026 are ambiguous between
+countries and can't be transcribed into `exceptions.json`.*
+
 ## 1. Engagement information
 
 | Field | Response |
@@ -26,10 +31,10 @@ section maps to which field.
 | AWS Account ID(s) in scope | |
 | Framework being audited (CIS / Well-Architected / SOC 2 / ISO 27001) | |
 | Requested by (auditor name) | |
-| Request date | |
-| Response due date | |
+| Request date (YYYY-MM-DD) | |
+| Response due date (YYYY-MM-DD) | |
 | Completed by (name, title) | |
-| Response date | |
+| Response date (YYYY-MM-DD) | |
 
 ## 2. AWS Organizations root access management
 
@@ -45,7 +50,7 @@ which most audits don't have.*
 | Is this account part of an AWS Organization? | Yes / No / Unsure |
 | If yes, is centralized Root Access Management (`RootCredentialsManagement`) enabled for this account? | Yes / No / Unsure |
 | Who can independently confirm this from the Organizations management account (name, how to reach them)? | |
-| Evidence attached or referenced (`aws iam list-organizations-features` output, console screenshot, ticket) | |
+| Evidence attached: the file produced by running the auditor's `collect_root_management_evidence.sh` in AWS CloudShell in the Organizations management account. Without the script, attach `aws sts get-caller-identity` and `aws iam list-organizations-features` output from the same session, plus the date (YYYY-MM-DD) it was run. | |
 | What is this account's expected root-credential review cadence, if root is *not* centrally managed (e.g. quarterly = 90 days, annual = 365 days)? | |
 | Is there any legitimate, expected root-account usage (e.g. a documented break-glass procedure)? If so, describe it. | |
 
@@ -59,23 +64,37 @@ CloudFormation StackSets execution role, etc.) should be given as a prefix
 or pattern rather than the exact current name, since the suffix changes if
 the role is recreated.*
 
-| Role/user name or pattern | Policy held | Purpose / justification | Owner / approver | Last reviewed | Review cadence |
-|---|---|---|---|---|---|
-| | | | | | |
-| | | | | | |
-| | | | | | |
+*For Evidence, give something that shows the access is intended and
+controlled: a runbook link, the IaC module that provisions the role, a
+ticket documenting its creation, or — for an IAM Identity Center
+permission set — who is assigned it. "It's always been like that" isn't
+evidence. For the roles AWS services create (`OrganizationAccountAccessRole`,
+`stacksets-exec-<hash>`, and IAM Identity Center `AWSReservedSSO_<name>_<hash>`
+roles), cite the exact file names of the two files the auditor's
+`collect_admin_role_evidence.sh` produces — one run in this account, one
+in the Organizations management account — and summarize what they show
+for that role (for example, "JoinedMethod CREATED; trust limited to
+management account 111122223333", or "permission set assigned to group
+Admins: 2 named users").*
 
-Common categories to check for, even if you don't think of them as
-"administrator roles" at first:
+| Role/user name or pattern | Policy held | Purpose / justification | Evidence | Owner / approver | Last reviewed (YYYY-MM-DD) | Review cadence |
+|---|---|---|---|---|---|---|
+| | | | | | | |
+| | | | | | | |
+| | | | | | | |
 
-- IAM Identity Center (SSO) permission sets named `AdministratorAccess` or
-  similar (`AWSReservedSSO_<name>_<hash>`)
-- `OrganizationAccountAccessRole` (created automatically in every member
-  account of an AWS Organization)
-- CloudFormation StackSets execution roles (`stacksets-exec-<hash>`)
-- CI/CD or infrastructure-as-code deployment roles (Terraform, CDK, etc.)
-- Named break-glass / emergency-access roles
-- Any third-party vendor or MSP role with broad access
+*Answer every row below, even if the answer is "None." A blank row is
+treated as not answered, not as "none," so the auditor can tell an
+overlooked category from one that doesn't exist in this account.*
+
+| Category | Any in this account? (Yes — listed above / None) |
+|---|---|
+| IAM Identity Center (SSO) permission sets with admin access (`AWSReservedSSO_<name>_<hash>`) | |
+| `OrganizationAccountAccessRole` (created automatically in every member account of an AWS Organization) | |
+| CloudFormation StackSets execution roles (`stacksets-exec-<hash>`) | |
+| CI/CD or infrastructure-as-code deployment roles (Terraform, CDK, etc.) | |
+| Named break-glass / emergency-access roles | |
+| Third-party vendor or MSP roles with broad access | |
 
 ## 4. Other known, already-accepted risks or compensating controls
 
@@ -88,8 +107,18 @@ can, and give a date by which the acceptance should be reviewed again —
 an accepted risk with no review date won't be recorded. Leave the last
 column blank; the auditor fills it in.*
 
-| Finding / control area | Resource(s) | What's expected to be flagged | Compensating control or justification | Owner / approver | Approval date | Review-by date | Check ID *(auditor)* |
+*For Current state, describe how the resource actually falls short today,
+specifically enough that the auditor can check it against what the audit
+finds. The acceptance covers that state only: if the audit finds something
+worse, it isn't covered. Both dates must be YYYY-MM-DD; a Review-by
+date in any other format can't be recorded. The first row is an
+example; replace or delete it. If there are no other accepted risks,
+write "None" in the first column of the first empty row — a section left
+blank is treated as not answered.*
+
+| Finding / control area | Resource(s) | Current state (how it falls short) | Compensating control or justification | Owner / approver | Approval date (YYYY-MM-DD) | Review-by date (YYYY-MM-DD) | Check ID *(auditor)* |
 |---|---|---|---|---|---|---|---|
+| *Example: S3 MFA Delete* | *`acme-tfstate-prod`, `acme-tfstate-dev`* | *MFA Delete disabled; versioning enabled* | *Object Lock (governance mode, 30-day retention); an SCP denies `s3:PutBucketVersioning` outside the deploy role* | *Jane Doe, Platform Lead* | *2026-10-01* | *2027-04-01* | |
 | | | | | | | | |
 | | | | | | | | |
 
@@ -113,4 +142,4 @@ the audit's evidence package (not hidden from the report) — see
 |---|---|
 | Name | |
 | Title | |
-| Date | |
+| Date (YYYY-MM-DD) | |

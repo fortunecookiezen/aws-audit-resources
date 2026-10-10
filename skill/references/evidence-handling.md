@@ -29,7 +29,7 @@ This doc is the intended lifecycle for a single audit engagement, start to finis
 
    Build the Word report (`skill/SKILL.md` Step 4) into the same directory, e.g. `audit-runs/111122223333-20261006/report.docx`. At this point the directory holds the full evidence package: engagement info, the documentation request response and its evidence, the exceptions file, raw snapshot, evaluated findings, and the human-readable report.
 
-5. **Decide where the evidence lives.** Once the audit is complete, move `audit-runs/<account_id>-<date>/` to one of:
+5. **Decide where the evidence lives.** Once the audit is complete, move `audit-runs/<account_id>-<YYYYMMDD>/` to one of:
 
    - **A private, per-client or per-engagement evidence repository** — never this repo, and never a fork of it that's publicly visible. A reasonable convention: one evidence repo per client or per account, named something like `<client>-audit-evidence`, with each engagement as a dated subdirectory or a dated commit. This gives you git history (who reviewed what, when) without mixing evidence into the tool repo's history.
    - **An archive**, when there's no standing evidence repo for a one-off engagement: tar and checksum the directory —
@@ -39,7 +39,7 @@ This doc is the intended lifecycle for a single audit engagement, start to finis
      ```
      and store the bundle + checksum (and, if your evidentiary requirements call for it, a GPG signature) somewhere access-controlled and outside git — encrypted cloud storage, a secure file share, whatever your existing evidence-retention policy already uses for this kind of material.
 
-6. **Clear the local working directory.** Once the evidence is safely in its new home, delete (or securely move) `audit-runs/<account_id>-<date>/` from your local clone of this repo. The `.gitignore` entry stops it from being *committed*, but it doesn't stop it from sitting on disk indefinitely across repeated engagements — treat that directory as scratch space for one audit, not a running archive.
+6. **Clear the local working directory.** Once the evidence is safely in its new home, delete (or securely move) `audit-runs/<account_id>-<YYYYMMDD>/` from your local clone of this repo. The `.gitignore` entry stops it from being *committed*, but it doesn't stop it from sitting on disk indefinitely across repeated engagements — treat that directory as scratch space for one audit, not a running archive.
 
 ## What this repo does to support that lifecycle
 
@@ -49,4 +49,4 @@ This doc is the intended lifecycle for a single audit engagement, start to finis
 
 ## If you're running this through an AI assistant without direct git/archive access
 
-Some environments (for example, a cloud-sandboxed coding assistant) can write files into your working directory but can't run `git commit`/`git push`, create a new private repo, or move files into encrypted storage on your behalf. In that case the assistant can do steps 1–4 (clone context, run the collector and checks, build the report) and hand you the finished `audit-runs/<account_id>-<date>/` directory, but a human completes step 5 (committing to the private evidence repo or archiving) and step 6 (clearing the working copy). Treat an assistant stopping at that handoff as correct behavior, not a missed step.
+Some environments (for example, a cloud-sandboxed coding assistant) can write files into your working directory but can't run `git commit`/`git push`, create a new private repo, or move files into encrypted storage on your behalf. In that case the assistant can do steps 1–4 (clone context, run the collector and checks, build the report) and hand you the finished `audit-runs/<account_id>-<YYYYMMDD>/` directory, but a human completes step 5 (committing to the private evidence repo or archiving) and step 6 (clearing the working copy). Treat an assistant stopping at that handoff as correct behavior, not a missed step.

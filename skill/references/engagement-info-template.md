@@ -48,12 +48,14 @@ before filling the file in.*
 
 ## Testing Narrative
 
-*One row per milestone. Leave `Date` blank for a milestone that hasn't
+*One row per milestone. Write `Date` as YYYY-MM-DD (for example,
+2026-10-08); the report prints it exactly as written, and `build_report.py`
+warns about any date in another format. Leave `Date` blank for a milestone that hasn't
 happened yet - the report shows it as "Pending" rather than inventing a
 date. Add a row only if you need an extra milestone beyond the five below;
 don't remove any of the five, even if blank.*
 
-| Milestone | Date | By | Notes |
+| Milestone | Date (YYYY-MM-DD) | By | Notes |
 |---|---|---|---|
 | Test Start |  |  |  |
 | Test Completion |  |  |  |

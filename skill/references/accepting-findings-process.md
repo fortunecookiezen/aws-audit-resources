@@ -68,15 +68,50 @@ in advance should cover the majority of an account's known exceptions.
      management account (or let the audit role's own auto-detection confirm
      it, if it's running with delegated-admin privileges — check
      `organization.root_credentials_management_queryable` in the snapshot).
-     If neither is available, the next best thing is a screenshot of the
-     Organizations console's root access management page, dated.
+     For the management-account check, use
+     `scripts/collect_root_management_evidence.sh` in CloudShell: it
+     records who ran the check and when, which become `attested_by` and
+     `attested_date`. If neither is available, the next best thing is a
+     screenshot of the Organizations console's root access management page,
+     showing the date and the signed-in identity.
    - *A named admin principal*: the role/user's actual name or ARN, and a
      one-line reason it's supposed to hold broad access (break-glass access,
      an AWS-managed automation construct like a StackSets exec role or
      `OrganizationAccountAccessRole`, a platform team's deployment role,
      etc.). "It's always been like that" is not evidence; a runbook link,
      an IaC module that provisions it, or a ticket documenting its creation
-     is.
+     is. For the roles AWS services create,
+     `scripts/collect_admin_role_evidence.sh` records the evidence: `member`
+     mode, run in the audited account, captures each role's trust policy
+     and its attached and inline policies (with the inline documents);
+     `management` mode, run in the management account, captures how the
+     account joined the organization, which service-managed StackSets
+     target it, and who is assigned each IAM Identity Center permission set
+     provisioned to it. Check that:
+     - `OrganizationAccountAccessRole` trusts only the management account,
+       and the account's `JoinedMethod` is `CREATED`. If it's `INVITED`,
+       someone created the role by hand, so it needs the same evidence as
+       any other admin role.
+     - each `stacksets-exec-<hash>` role trusts only
+       `AWSServiceRoleForCloudFormationStackSetsOrgAdmin` in the management
+       (or delegated-admin) account, and an ACTIVE service-managed StackSet
+       still has instances in this account. If none does, the role is left
+       over: remove it rather than accept it. Read the StackSet
+       descriptions too: a StackSet that creates another admin role (a
+       deployment or vendor role) means that role belongs in the request's
+       §3 table, not under "None". `member` mode lists every role a
+       StackSet's stack created in the account, marked with the stack that
+       created it, so these roles appear in the evidence even when nobody
+       listed them. StackSet stacks are regional: set `STACK_REGIONS` to
+       every region the management-mode output shows instances in.
+     - each `AWSReservedSSO_<name>_<hash>` role trusts only the account's
+       `AWSSSO_…_DO_NOT_DELETE` SAML provider, and the matching permission
+       set's assignments name the specific users and groups (with members)
+       the owner expects to have admin access. A group nobody can account
+       for, or a user who has left, is a finding.
+
+     Any other principal in any of these trust policies is a finding, not
+     an exception.
    - *A longer root-reuse window*: the account's actual audit/review
      cadence (e.g., quarterly reviews justify a 90-day window; annual
      reviews justify 365).

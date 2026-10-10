@@ -115,7 +115,7 @@ step updates which row.
    post-remediation." The report stays `DRAFT` — the filename suffix and
    cover banner are automatic from `Report Status` and need no extra step.
    The first time this step runs for an engagement, also set the Testing
-   Narrative's `Findings Draft` row to today's date; a later retest doesn't
+   Narrative's `Findings Draft` row to today's date (YYYY-MM-DD); a later retest doesn't
    change that row, it's a one-time "a draft now exists" milestone.
 
 7. **Close the loop on the remediation tracker.** Mark each fixed finding
@@ -198,7 +198,7 @@ work has stopped. Do this once, when the engagement is actually done:
 2. **Fill in the last two Testing Narrative rows in `engagement-info.md`:**
    `Findings Review` (who reviewed the final findings and when — this can
    be the auditor, the account/engagement owner, or both; record whoever
-   actually did it) and `Findings Completion` (today's date, once step 1
+   actually did it) and `Findings Completion` (today's date as YYYY-MM-DD, once step 1
    above is actually true). Fill in the `Auditor Name/Title/Organization/
    Contact` fields too if they were left blank during drafting — a `FINAL`
    report shouldn't still say "Not provided" for who produced it.

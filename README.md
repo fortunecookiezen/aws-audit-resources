@@ -13,7 +13,7 @@ miscellaneous resources for performing audit functions in aws accounts
 
 ## Running an audit? Read this first
 
-A real audit run (`skill/scripts/collect_aws_data.py` against a live account) produces evidence with real account data in it — that evidence never belongs in this repo. Write it into a gitignored `audit-runs/<account_id>-<date>/` directory and move it to a private evidence repo or an archive when you're done. See [`skill/references/evidence-handling.md`](skill/references/evidence-handling.md).
+A real audit run (`skill/scripts/collect_aws_data.py` against a live account) produces evidence with real account data in it — that evidence never belongs in this repo. Write it into a gitignored `audit-runs/<account_id>-<YYYYMMDD>/` directory and move it to a private evidence repo or an archive when you're done. See [`skill/references/evidence-handling.md`](skill/references/evidence-handling.md).
 
 ## Security scanning
 
