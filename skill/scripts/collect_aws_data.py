@@ -9,6 +9,7 @@ that scripts/run_checks.py can evaluate against a chosen compliance framework.
 Usage:
     # From the skill/ directory, in a virtual environment (never the system Python):
     python3 -m venv .venv && source .venv/bin/activate
+    # Python >= 3.10. On macOS, /usr/bin/python3 is 3.9: use /opt/homebrew/bin/python3 -m venv .venv
     pip install -r requirements.txt
 
     # Using credentials already in the environment / a named profile:
@@ -124,6 +125,63 @@ def _try(fn, default=None, label=""):
         return default
 
 
+def _paginate(client, operation, key, **kwargs):
+    """All items under `key` across every page of a paginated API call. A
+    single un-paginated call silently truncates (list_policies returns at
+    most 100 items per page by default)."""
+    items = []
+    for page in client.get_paginator(operation).paginate(**kwargs):
+        items.extend(page.get(key, []))
+    return items
+
+
+def _is_admin_wildcard(doc):
+    """True if a policy document has an Allow statement with Action "*" and
+    Resource "*" - full administrator access."""
+    if not doc:
+        return False
+    statements = doc.get("Statement", [])
+    if isinstance(statements, dict):
+        statements = [statements]
+    for stmt in statements:
+        if stmt.get("Effect") != "Allow":
+            continue
+        actions = stmt.get("Action", [])
+        resources = stmt.get("Resource", [])
+        if isinstance(actions, str):
+            actions = [actions]
+        if isinstance(resources, str):
+            resources = [resources]
+        if "*" in actions and "*" in resources:
+            return True
+    return False
+
+
+def _inline_policies(iam, principal_type, name, arn, policy_names):
+    """One entry per inline policy on a user/role/group, flagged for
+    admin-wildcard. Documents aren't stored (they can be large); only whether
+    each one grants Action:*/Resource:*. A document that can't be read is
+    recorded with is_admin_wildcard None so the gap is visible, not assumed
+    safe."""
+    getter = {"user": ("get_user_policy", "UserName"),
+              "role": ("get_role_policy", "RoleName"),
+              "group": ("get_group_policy", "GroupName")}[principal_type]
+    entries = []
+    for policy_name in policy_names:
+        doc = _try(
+            lambda: getattr(iam, getter[0])(**{getter[1]: name, "PolicyName": policy_name})["PolicyDocument"],
+            default=None, label=f"{getter[0]}({name}, {policy_name})",
+        )
+        entries.append({
+            "principal_type": principal_type,
+            "principal_name": name,
+            "principal_arn": arn,
+            "policy_name": policy_name,
+            "is_admin_wildcard": _is_admin_wildcard(doc) if doc is not None else None,
+        })
+    return entries
+
+
 def collect_iam(session):
     iam = session.client("iam")
     out = {}
@@ -193,19 +251,20 @@ def collect_iam(session):
 
     # Per-user policy attachment detail (direct vs. group-only, admin-wildcard detection)
     users = []
-    iam_users = _try(lambda: iam.list_users()["Users"], default=[], label="list_users")
+    inline_policies = []
+    iam_users = _try(lambda: _paginate(iam, "list_users", "Users"), default=[], label="list_users")
     for u in iam_users:
         name = u["UserName"]
         attached = _try(
-            lambda: iam.list_attached_user_policies(UserName=name)["AttachedPolicies"],
+            lambda: _paginate(iam, "list_attached_user_policies", "AttachedPolicies", UserName=name),
             default=[], label=f"list_attached_user_policies({name})",
         )
         inline = _try(
-            lambda: iam.list_user_policies(UserName=name)["PolicyNames"],
+            lambda: _paginate(iam, "list_user_policies", "PolicyNames", UserName=name),
             default=[], label=f"list_user_policies({name})",
         )
         groups = _try(
-            lambda: iam.list_groups_for_user(UserName=name)["Groups"],
+            lambda: _paginate(iam, "list_groups_for_user", "Groups", UserName=name),
             default=[], label=f"list_groups_for_user({name})",
         )
         users.append({
@@ -218,12 +277,32 @@ def collect_iam(session):
             "has_direct_attachment": bool(attached) or bool(inline),
             "group_names": [g["GroupName"] for g in groups],
         })
+        inline_policies += _inline_policies(iam, "user", name, u["Arn"], inline)
     out["users"] = users
+
+    # Inline policies on roles and groups. An inline Action:* / Resource:*
+    # grant is as much full admin as an attached AdministratorAccess, but it
+    # never shows up in list_policies, so it has to be read per principal.
+    for r in _try(lambda: _paginate(iam, "list_roles", "Roles"), default=[], label="list_roles"):
+        if r.get("Path", "").startswith("/aws-service-role/"):
+            continue  # service-linked roles: AWS-managed, can't carry customer inline policies
+        names = _try(
+            lambda: _paginate(iam, "list_role_policies", "PolicyNames", RoleName=r["RoleName"]),
+            default=[], label=f"list_role_policies({r['RoleName']})",
+        )
+        inline_policies += _inline_policies(iam, "role", r["RoleName"], r["Arn"], names)
+    for g in _try(lambda: _paginate(iam, "list_groups", "Groups"), default=[], label="list_groups"):
+        names = _try(
+            lambda: _paginate(iam, "list_group_policies", "PolicyNames", GroupName=g["GroupName"]),
+            default=[], label=f"list_group_policies({g['GroupName']})",
+        )
+        inline_policies += _inline_policies(iam, "group", g["GroupName"], g["Arn"], names)
+    out["inline_policies"] = inline_policies
 
     # Policies currently attached anywhere, flagged for *:* admin-wildcard statements
     policies = []
     attached_policies = _try(
-        lambda: iam.list_policies(Scope="All", OnlyAttached=True)["Policies"],
+        lambda: _paginate(iam, "list_policies", "Policies", Scope="All", OnlyAttached=True),
         default=[], label="list_policies",
     )
     for p in attached_policies:
@@ -235,22 +314,7 @@ def collect_iam(session):
                 lambda: iam.get_policy_version(PolicyArn=arn, VersionId=version_id)["PolicyVersion"]["Document"],
                 default=None, label=f"get_policy_version({arn})",
             )
-            if doc:
-                statements = doc.get("Statement", [])
-                if isinstance(statements, dict):
-                    statements = [statements]
-                for stmt in statements:
-                    if stmt.get("Effect") != "Allow":
-                        continue
-                    actions = stmt.get("Action", [])
-                    resources = stmt.get("Resource", [])
-                    if isinstance(actions, str):
-                        actions = [actions]
-                    if isinstance(resources, str):
-                        resources = [resources]
-                    if "*" in actions and "*" in resources:
-                        is_admin_wildcard = True
-                        break
+            is_admin_wildcard = _is_admin_wildcard(doc)
         entry = {
             "policy_name": p["PolicyName"],
             "arn": arn,
@@ -260,13 +324,21 @@ def collect_iam(session):
         # Only chase down *who* holds an admin-wildcard policy (extra API calls) -
         # non-admin policies don't need this for any check we run today.
         if is_admin_wildcard:
-            attached_entities = _try(
-                lambda: iam.list_entities_for_policy(PolicyArn=arn),
-                default={}, label=f"list_entities_for_policy({arn})",
+            roles = _try(
+                lambda: _paginate(iam, "list_entities_for_policy", "PolicyRoles", PolicyArn=arn),
+                default=[], label=f"list_entities_for_policy({arn}) roles",
             )
-            entry["attached_role_names"] = [r["RoleName"] for r in attached_entities.get("PolicyRoles", [])]
-            entry["attached_user_names"] = [u["UserName"] for u in attached_entities.get("PolicyUsers", [])]
-            entry["attached_group_names"] = [g["GroupName"] for g in attached_entities.get("PolicyGroups", [])]
+            users_ = _try(
+                lambda: _paginate(iam, "list_entities_for_policy", "PolicyUsers", PolicyArn=arn),
+                default=[], label=f"list_entities_for_policy({arn}) users",
+            )
+            groups_ = _try(
+                lambda: _paginate(iam, "list_entities_for_policy", "PolicyGroups", PolicyArn=arn),
+                default=[], label=f"list_entities_for_policy({arn}) groups",
+            )
+            entry["attached_role_names"] = [r["RoleName"] for r in roles]
+            entry["attached_user_names"] = [u["UserName"] for u in users_]
+            entry["attached_group_names"] = [g["GroupName"] for g in groups_]
         policies.append(entry)
     out["policies"] = policies
 

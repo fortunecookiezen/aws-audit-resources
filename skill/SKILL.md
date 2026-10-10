@@ -55,9 +55,12 @@ This repo's `cloudformation/security-audit-role.yml` (or the equivalent `terrafo
 
 3. **Run the collector, writing into the engagement directory created in Step 1:**
    ```bash
-   # Python >= 3.10 required (macOS's /usr/bin/python3 is 3.9 — use Homebrew/pyenv/uv Python).
-   # Use a venv rather than installing into the system/Homebrew Python.
+   # Python >= 3.10 required. Use a venv rather than installing into the system/Homebrew Python.
    python3 -m venv .venv && source .venv/bin/activate
+   # macOS: /usr/bin/python3 is Apple's 3.9, and it's often first on PATH, so name
+   # Homebrew's Python explicitly instead (delete any .venv made with 3.9 first):
+   #   /opt/homebrew/bin/python3 -m venv .venv && source .venv/bin/activate   # Intel Macs: /usr/local/bin/python3
+   python3 --version   # inside the venv; must be 3.10 or newer
    pip install -r requirements.txt
    python3 scripts/collect_aws_data.py --all-regions -o ../audit-runs/<account_id>-<YYYYMMDD>/snapshot.json
    # or, to have the script assume the role itself instead of pre-exporting credentials:

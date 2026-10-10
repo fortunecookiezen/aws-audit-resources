@@ -56,6 +56,14 @@ back to its original per-policy (not per-principal) evaluation, which cannot
 be excepted. Re-collect to get attachment-level data if you need to except a
 specific role.
 
+Inline admin grants are also only evaluated in snapshots that have
+`iam.inline_policies`, which `collect_aws_data.py` records from this version
+on. A snapshot without it can't show an inline `*:*` policy at all, so
+re-collect before relying on a clean `iam_no_full_admin_policy` result. For an
+inline grant, an `accepted_admin_principals` rule with `match: "arn"` is
+matched against the principal's ARN (for an attached managed policy, against
+the policy's ARN).
+
 ## A claim is corroborated, never just trusted
 
 Neither an auto-detected result nor an attestation is applied on its own
