@@ -59,23 +59,30 @@ CloudFormation StackSets execution role, etc.) should be given as a prefix
 or pattern rather than the exact current name, since the suffix changes if
 the role is recreated.*
 
-| Role/user name or pattern | Policy held | Purpose / justification | Owner / approver | Last reviewed | Review cadence |
-|---|---|---|---|---|---|
-| | | | | | |
-| | | | | | |
-| | | | | | |
+*For Evidence, give something that shows the access is intended and
+controlled: a runbook link, the IaC module that provisions the role, a
+ticket documenting its creation, or — for an IAM Identity Center
+permission set — who is assigned it. "It's always been like that" isn't
+evidence.*
 
-Common categories to check for, even if you don't think of them as
-"administrator roles" at first:
+| Role/user name or pattern | Policy held | Purpose / justification | Evidence | Owner / approver | Last reviewed | Review cadence |
+|---|---|---|---|---|---|---|
+| | | | | | | |
+| | | | | | | |
+| | | | | | | |
 
-- IAM Identity Center (SSO) permission sets named `AdministratorAccess` or
-  similar (`AWSReservedSSO_<name>_<hash>`)
-- `OrganizationAccountAccessRole` (created automatically in every member
-  account of an AWS Organization)
-- CloudFormation StackSets execution roles (`stacksets-exec-<hash>`)
-- CI/CD or infrastructure-as-code deployment roles (Terraform, CDK, etc.)
-- Named break-glass / emergency-access roles
-- Any third-party vendor or MSP role with broad access
+*Answer every row below, even if the answer is "None." A blank row is
+treated as not answered, not as "none," so the auditor can tell an
+overlooked category from one that doesn't exist in this account.*
+
+| Category | Any in this account? (Yes — listed above / None) |
+|---|---|
+| IAM Identity Center (SSO) permission sets with admin access (`AWSReservedSSO_<name>_<hash>`) | |
+| `OrganizationAccountAccessRole` (created automatically in every member account of an AWS Organization) | |
+| CloudFormation StackSets execution roles (`stacksets-exec-<hash>`) | |
+| CI/CD or infrastructure-as-code deployment roles (Terraform, CDK, etc.) | |
+| Named break-glass / emergency-access roles | |
+| Third-party vendor or MSP roles with broad access | |
 
 ## 4. Other known, already-accepted risks or compensating controls
 
