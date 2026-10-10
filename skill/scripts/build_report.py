@@ -272,6 +272,11 @@ def format_timestamp(value):
     return dt.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
 
 
+def shorten_hashes(text):
+    """Shorten 64-hex-character SHA-256 values for display."""
+    return re.sub(r"\b([0-9a-f]{12})[0-9a-f]{52}\b", r"\1…", str(text))
+
+
 def refs_text(finding, framework):
     refs = finding.get("refs") or {}
     if framework == "all":
@@ -419,19 +424,32 @@ def build_accepted(doc, ctx, number):
         "risk-accepted through the engagement's exceptions file. They are neither open issues nor "
         "passing controls. Each entry shows who accepted it, why, and the rule that matched."
     )
+    doc.add_paragraph(
+        "SHA-256 hashes are shortened to their first 12 characters here; the full values are in the "
+        "exceptions file in the evidence package."
+    ).runs[0].italic = True
     accepted.sort(key=lambda f: (severity_key(f["severity"]), area_key(f["area"])))
-    rows = []
+    # One block per finding rather than a table row: acceptance notes cite
+    # evidence files and hashes, and in a table column they run for pages.
     for f in accepted:
         # run_checks.py appends " Accepted: <note> (...)" to the original evidence.
         evidence, sep, acceptance = f["evidence"].partition(" Accepted: ")
-        rows.append((f["title"], f["severity"], f["resource"], evidence if sep else "", acceptance if sep else f["evidence"]))
-    add_table(
-        doc,
-        ["Finding", "Severity", "Resource", "Evidence", "Accepted because (from exceptions file)"],
-        rows,
-        [1.3, 0.7, 1.1, 1.5, 1.9],
-        font_size=8,
-    )
+        if not sep:
+            evidence, acceptance = "", f["evidence"]
+        doc.add_heading(str(f["resource"]), level=3)
+        meta = doc.add_paragraph()
+        meta.add_run(f"{f['title']}  ·  ").italic = True
+        sev = meta.add_run(f["severity"])
+        sev.bold = True
+        sev.font.color.rgb = RGBColor.from_string(SEVERITY_FILL.get(f["severity"], "000000"))
+        meta.add_run(f"  ·  {refs_text(f, ctx['framework'])}  ·  {f['check_id']}")
+        if evidence:
+            p = doc.add_paragraph()
+            p.add_run("Finding: ").bold = True
+            p.add_run(shorten_hashes(evidence))
+        p = doc.add_paragraph()
+        p.add_run("Accepted because: ").bold = True
+        p.add_run(shorten_hashes(acceptance))
 
 
 def build_passing(doc, ctx, number):
@@ -462,20 +480,25 @@ def build_detailed(doc, ctx, number):
             doc.add_paragraph("No failing findings in this area.")
             continue
         grouped = group_by_check(area_failed)
-        for check_id in sorted(grouped, key=lambda c: (severity_key(grouped[c][0]["severity"]), c)):
-            fs = grouped[check_id]
+        for check_id in sorted(grouped, key=lambda c: (min(severity_key(f["severity"]) for f in grouped[c]), c)):
+            fs = sorted(grouped[check_id], key=lambda f: severity_key(f["severity"]))
             f0 = fs[0]
+            mixed = len({f["severity"] for f in fs}) > 1
             doc.add_heading(f0["title"], level=3)
             p = doc.add_paragraph()
             p.add_run("Severity: ").bold = True
-            sev = p.add_run(f0["severity"])
+            sev = p.add_run(f0["severity"] + (" (highest; varies by resource)" if mixed else ""))
             sev.bold = True
             sev.font.color.rgb = RGBColor.from_string(SEVERITY_FILL.get(f0["severity"], "000000"))
             p.add_run("    Control: ").bold = True
             p.add_run(refs_text(f0, ctx["framework"]))
             p.add_run("    Check ID: ").bold = True
             p.add_run(check_id)
-            add_table(doc, ["Resource", "Evidence"], [(f["resource"], f["evidence"]) for f in fs], [1.8, 4.7])
+            if mixed:
+                add_table(doc, ["Resource", "Severity", "Evidence"],
+                          [(f["resource"], f["severity"], f["evidence"]) for f in fs], [1.7, 0.7, 4.1])
+            else:
+                add_table(doc, ["Resource", "Evidence"], [(f["resource"], f["evidence"]) for f in fs], [1.8, 4.7])
             rp = doc.add_paragraph()
             rp.add_run("Remediation: ").bold = True
             rp.add_run(f0["remediation"])
