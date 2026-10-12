@@ -29,7 +29,10 @@
 #       account joined (JoinedMethod CREATED means Organizations created
 #       OrganizationAccountAccessRole; INVITED means someone created it by
 #       hand), whether StackSets trusted access is enabled, and which
-#       service-managed StackSets have instances in the member account. It
+#       service-managed StackSets have instances in the member account. For
+#       each of those StackSets it records the template body and parameter
+#       values (describe-stack-set), so a role a StackSet deploys - and the
+#       policy it grants - is shown as defined, not only as deployed. It
 #       also records every IAM Identity Center permission set provisioned to
 #       the member account: its managed and inline policies, and who is
 #       assigned it - users by user name, groups by name with their members.
@@ -234,7 +237,7 @@ collect_sso() {
 }
 
 collect_management() {
-  local member_account="${1:-}" call_as="${CALL_AS:-SELF}" account service_access stack_sets instances="[]" name inst sso
+  local member_account="${1:-}" call_as="${CALL_AS:-SELF}" account service_access stack_sets instances="[]" templates="[]" name inst detail sso
   [[ "$member_account" =~ ^[0-9]{12}$ ]] || { echo "ERROR: management mode needs the 12-digit member account ID." >&2; usage; }
 
   account="$(aws_json organizations describe-account --account-id "$member_account")"
@@ -252,19 +255,32 @@ collect_management() {
               --stack-instance-account "$member_account" --call-as "$call_as")"
     instances="$(jq --arg name "$name" --argjson inst "$inst" \
       '. + [{stack_set_name: $name, instances: ($inst.Summaries // $inst)}]' <<<"$instances")"
+    # Only StackSets deployed to this account (or whose instances couldn't be
+    # listed) need their template in this account's evidence.
+    if jq -e '(.Summaries | type) != "array" or (.Summaries | length) > 0' >/dev/null <<<"$inst"; then
+      detail="$(aws_json cloudformation describe-stack-set --stack-set-name "$name" --call-as "$call_as")"
+      templates="$(jq --arg name "$name" --argjson d "$detail" \
+        '. + [if $d.error then {stack_set_name: $name, error: $d.error}
+              else {stack_set_name: $name,
+                    description: ($d.StackSet.Description // null),
+                    parameters: ($d.StackSet.Parameters // []),
+                    capabilities: ($d.StackSet.Capabilities // []),
+                    template_body: ($d.StackSet.TemplateBody // null)} end]' <<<"$templates")"
+    fi
   done < <(jq -r '.Summaries[]? | select(.PermissionModel == "SERVICE_MANAGED") | .StackSetName' <<<"$stack_sets")
 
   sso="$(collect_sso "$member_account")"
 
   write_evidence "management-${member_account}" "$(jq -n \
     --arg member "$member_account" --argjson account "$account" --argjson access "$service_access" \
-    --argjson stack_sets "$stack_sets" --argjson instances "$instances" --argjson sso "$sso" \
+    --argjson stack_sets "$stack_sets" --argjson instances "$instances" --argjson templates "$templates" --argjson sso "$sso" \
     '{mode: "management",
       member_account_id: $member,
       member_account: ($account.Account // $account),
       enabled_service_principals: ($access.EnabledServicePrincipals // $access),
       service_managed_stack_sets: [($stack_sets.Summaries // [])[] | select(.PermissionModel == "SERVICE_MANAGED")],
       stack_instances_in_member_account: [$instances[] | select((.instances | type) != "array" or (.instances | length) > 0)],
+      stack_set_templates: $templates,
       identity_center: $sso}')"
 
   echo
@@ -277,8 +293,17 @@ collect_management() {
   else
     echo "WARNING: StackSets trusted access is not enabled (or not readable); service-managed stacksets-exec roles shouldn't exist." >&2
   fi
-  jq -r 'if length == 0 then "No ACTIVE service-managed StackSet has instances in this account - a stacksets-exec role here may be left over."
+  jq -r 'map(select((.instances | type) != "array" or (.instances | length) > 0))
+         | if length == 0 then "No ACTIVE service-managed StackSet has instances in this account - a stacksets-exec role here may be left over."
          else .[] | "StackSet \(.stack_set_name) has instance(s) in this account." end' <<<"$instances"
+  # A text match, not a policy evaluation: it points the reviewer at the
+  # templates to read, and a template it doesn't flag still needs reading.
+  jq -r '.[] | if .error then "WARNING: template for StackSet \(.stack_set_name) not recorded: \(.error)"
+         else "StackSet \(.stack_set_name) template: " +
+           ([(if (.template_body // "") | test("AWS::IAM::(Role|User|Group)\\b") then "creates IAM principals" else empty end),
+             (if (.template_body // "") | test("AdministratorAccess|[\"\u0027]?Action[\"\u0027]?\\s*:\\s*[\"\u0027]\\*[\"\u0027]") then "mentions AdministratorAccess or Action \"*\" - read it" else empty end)]
+            | if length == 0 then "no IAM principals found" else join("; ") end)
+         end' <<<"$templates"
   jq -r 'if .error then "WARNING: Identity Center not recorded: \(.error)"
          else .permission_sets[] | "Permission set \(.name): policies \([.managed_policies[]?.Name] + (if .inline_policy then ["inline"] else [] end) | join(", ")); assigned to \([.assigned_to[] | if .type == "USER" then "user \(.user_name // .id)" else "group \(.group_name // .id) (\(.members | join(", ")))" end] | join("; "))"
          end' <<<"$sso"
