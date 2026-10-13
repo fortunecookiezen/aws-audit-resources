@@ -36,25 +36,41 @@ Output schema (top level):
       "cloudtrail": { ... },
       "ec2": { ... },
       "account_contacts": { ... },
-      "organization": { ... }
+      "organization": { ... },
+      "collection_errors": [
+        {"call": "describe_vpcs(us-east-1)", "operation": "describe_vpcs",
+         "region": "us-east-1", "error_code": "UnauthorizedOperation",
+         "message": "..."}, ...
+      ]
     }
 
 Any section can be missing or partial (e.g. if the caller lacks a permission,
 or a user hand-builds a subset of this schema from exported files) — run_checks.py
 marks checks that need missing data as "skipped" rather than failing them.
+
+A call that fails during collection leaves an empty value in its place (an
+empty VPC list, no bucket logging), which looks the same as an account with
+nothing there. collection_errors records every such failure, so run_checks.py
+can mark the checks that depend on it as incomplete and diff_findings.py won't
+count their missing resources as fixed. An empty list means every call
+succeeded; a snapshot without the key predates this and can't say either way.
+Error codes that mean "not configured" (no password policy, no bucket policy,
+no public access block, no security contact) are the answer, not a failure,
+and aren't recorded.
 """
 
 import argparse
 import csv
 import io
 import json
+import re
 import sys
 import time
 from datetime import datetime, timezone
 
 try:
     import boto3
-    from botocore.exceptions import ClientError
+    from botocore.exceptions import BotoCoreError, ClientError
 except ImportError:
     print("boto3 is required: activate a venv and run pip install -r requirements.txt (from the skill/ directory)", file=sys.stderr)
     sys.exit(1)
@@ -117,11 +133,51 @@ def get_regions(session, args):
     return [session.region_name or "us-east-1"]
 
 
-def _try(fn, default=None, label=""):
+# Every failed call, written to the snapshot as collection_errors.
+COLLECTION_ERRORS = []
+
+# Error codes that mean "this isn't configured," not "the call failed": the
+# default value is the real answer, so they aren't collection errors.
+NOT_CONFIGURED = {
+    "get_account_password_policy": {"NoSuchEntity"},
+    "get_public_access_block": {"NoSuchPublicAccessBlockConfiguration"},
+    "get_bucket_policy": {"NoSuchBucketPolicy"},
+    "get_alternate_contact": {"ResourceNotFoundException"},
+}
+
+
+def _operation(label):
+    """API operation name from a call label: "describe_vpcs(us-east-1)" ->
+    "describe_vpcs", "s3control.get_public_access_block" ->
+    "get_public_access_block"."""
+    return re.split(r"[(\s]", label, maxsplit=1)[0].rsplit(".", 1)[-1]
+
+
+def _record_error(label, code, message, region=None):
+    COLLECTION_ERRORS.append({
+        "call": label,
+        "operation": _operation(label),
+        "region": region,
+        "error_code": code,
+        "message": message,
+    })
+    print(f"  [warn] {label}: {code}", file=sys.stderr)
+
+
+def _try(fn, default=None, label="", region=None):
     try:
         return fn()
     except ClientError as e:
-        print(f"  [warn] {label or fn}: {e.response.get('Error', {}).get('Code', e)}", file=sys.stderr)
+        error = e.response.get("Error", {})
+        code = error.get("Code", "Unknown")
+        if code in NOT_CONFIGURED.get(_operation(label), ()):
+            return default
+        _record_error(label, code, error.get("Message", str(e)), region)
+        return default
+    except BotoCoreError as e:
+        # Endpoint, connection and credential failures: before this, one
+        # unreachable region ended the whole run.
+        _record_error(label, type(e).__name__, str(e), region)
         return default
 
 
@@ -227,6 +283,8 @@ def collect_iam(session):
                 raise
         else:
             report = None
+            _record_error("get_credential_report", "ReportNotReady",
+                          "credential report still in progress after 10 attempts")
         if report:
             # boto3 already base64-decodes IAM's blob-typed Content field for you
             # (botocore's protocol parser does this automatically) - it arrives as
@@ -245,7 +303,8 @@ def collect_iam(session):
             content = raw.decode("utf-8") if isinstance(raw, bytes) else raw
             credential_rows = list(csv.DictReader(io.StringIO(content)))
     except ClientError as e:
-        print(f"  [warn] credential report: {e.response.get('Error', {}).get('Code', e)}", file=sys.stderr)
+        _record_error("get_credential_report", e.response.get("Error", {}).get("Code", "Unknown"),
+                      e.response.get("Error", {}).get("Message", str(e)))
 
     out["credential_report"] = credential_rows
 
@@ -469,11 +528,11 @@ def collect_ec2(session, regions):
     for region in regions:
         ec2 = session.client("ec2", region_name=region)
 
-        vpcs = _try(lambda: ec2.describe_vpcs()["Vpcs"], default=[], label=f"describe_vpcs({region})")
+        vpcs = _try(lambda: ec2.describe_vpcs()["Vpcs"], default=[], label=f"describe_vpcs({region})", region=region)
         for v in vpcs:
             out["vpcs"].append({"region": region, "vpc_id": v["VpcId"], "is_default": v.get("IsDefault", False)})
 
-        flow_logs = _try(lambda: ec2.describe_flow_logs()["FlowLogs"], default=[], label=f"describe_flow_logs({region})")
+        flow_logs = _try(lambda: ec2.describe_flow_logs()["FlowLogs"], default=[], label=f"describe_flow_logs({region})", region=region)
         for fl in flow_logs:
             out["flow_logs"].append({
                 "region": region,
@@ -482,7 +541,7 @@ def collect_ec2(session, regions):
                 "flow_log_status": fl.get("FlowLogStatus"),
             })
 
-        sgs = _try(lambda: ec2.describe_security_groups()["SecurityGroups"], default=[], label=f"describe_security_groups({region})")
+        sgs = _try(lambda: ec2.describe_security_groups()["SecurityGroups"], default=[], label=f"describe_security_groups({region})", region=region)
         for sg in sgs:
             out["security_groups"].append({
                 "region": region,
@@ -493,7 +552,7 @@ def collect_ec2(session, regions):
                 "ip_permissions_egress": sg.get("IpPermissionsEgress", []),
             })
 
-        reservations = _try(lambda: ec2.describe_instances()["Reservations"], default=[], label=f"describe_instances({region})")
+        reservations = _try(lambda: ec2.describe_instances()["Reservations"], default=[], label=f"describe_instances({region})", region=region)
         for r in reservations:
             for i in r.get("Instances", []):
                 out["instances"].append({
@@ -554,7 +613,7 @@ def collect_organization(session):
     except ClientError as e:
         code = e.response.get("Error", {}).get("Code", "")
         if code not in ("AWSOrganizationsNotInUseException", "AccessDeniedException"):
-            print(f"  [warn] organizations.describe_organization: {code}", file=sys.stderr)
+            _record_error("organizations.describe_organization", code, e.response.get("Error", {}).get("Message", str(e)))
         return out
 
     out["in_organization"] = True
@@ -570,7 +629,7 @@ def collect_organization(session):
     except ClientError as e:
         code = e.response.get("Error", {}).get("Code", "")
         if code != "AccountNotManagementOrDelegatedAdministrator":
-            print(f"  [warn] iam.list_organizations_features: {code}", file=sys.stderr)
+            _record_error("iam.list_organizations_features", code, e.response.get("Error", {}).get("Message", str(e)))
         # else: expected when running from a plain member account - not an error.
 
     return out
@@ -620,10 +679,16 @@ def main():
     print("Collecting organization context...", file=sys.stderr)
     snapshot["organization"] = collect_organization(session)
 
+    snapshot["collection_errors"] = COLLECTION_ERRORS
+
     with open(args.output, "w") as f:
         json.dump(snapshot, f, indent=2, default=str)
 
     print(f"Wrote {args.output}", file=sys.stderr)
+    if COLLECTION_ERRORS:
+        print(f"WARNING: {len(COLLECTION_ERRORS)} call(s) failed and were recorded as collection_errors; "
+              "the checks that depend on them will be marked incomplete. Fix the cause (usually a "
+              "permission or a region) and collect again before relying on those checks.", file=sys.stderr)
 
 
 if __name__ == "__main__":

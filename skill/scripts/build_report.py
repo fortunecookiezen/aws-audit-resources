@@ -392,6 +392,7 @@ def build_executive_summary(doc, ctx):
         ("Accepted findings", s.get("accepted", 0)),
         ("Checks evaluated", len(s.get("checks_evaluated") or [])),
         ("Checks skipped (missing data)", len(s.get("checks_skipped") or [])),
+        ("Checks incomplete (collection errors)", len(s.get("checks_incomplete") or {})),
     ]
     add_table(doc, ["Measure", "Count"], rows, [3.5, 1.5], font_size=10)
 
@@ -526,15 +527,41 @@ def build_appendix(doc, ctx):
     titles = {f["check_id"]: f["title"] for f in ctx["findings"]}
     evaluated = s.get("checks_evaluated") or []
     skipped = s.get("checks_skipped") or []
-    doc.add_paragraph(f"{len(evaluated)} automated check(s) evaluated, {len(skipped)} skipped because the snapshot lacked the data they need.")
+    incomplete = s.get("checks_incomplete") or {}
+    doc.add_paragraph(
+        f"{len(evaluated)} automated check(s) evaluated, {len(skipped)} skipped because the snapshot lacked the data they need"
+        + (f", {len(incomplete)} incomplete because an API call they depend on failed during collection." if incomplete else ".")
+    )
     add_table(
         doc,
         ["Check ID", "Title", "Result"],
-        [(c, titles.get(c, "(no resources evaluated)"), "Evaluated") for c in evaluated]
+        [(c, titles.get(c, "(no resources evaluated)"), "Incomplete: collection error" if c in incomplete else "Evaluated")
+         for c in evaluated]
         + [(c, "—", "Skipped: missing data") for c in skipped],
         [2.4, 3.1, 1.0],
         font_size=8,
     )
+
+    doc.add_heading("Collection errors", level=2)
+    if not s.get("collection_errors_recorded"):
+        doc.add_paragraph(
+            "Not recorded: the snapshot was collected before the collector recorded failed API calls, so a "
+            "failed call can't be distinguished from an empty result."
+        )
+    elif not s.get("collection_errors"):
+        doc.add_paragraph("None: every API call made during collection succeeded.")
+    else:
+        doc.add_paragraph(
+            "These API calls failed during collection. A check marked incomplete above covers only what was "
+            "collected: a resource the failed call would have returned is missing from its results, not passing."
+        )
+        add_table(
+            doc,
+            ["Call", "Error"],
+            [(e.get("call", ""), e.get("error_code", "")) for e in s["collection_errors"]],
+            [4.0, 2.5],
+            font_size=8,
+        )
 
     manual = ctx["manual_checks"]
     if manual:
@@ -620,6 +647,17 @@ def finalization_warnings(ctx):
         warnings.append(
             f"{open_count} finding(s) are still \"fail\". Every finding must be fixed-and-retested or accepted "
             "before FINAL (remediation-and-retesting.md, Finalizing step 1)."
+        )
+    incomplete = ctx["summary"].get("checks_incomplete") or {}
+    if incomplete:
+        warnings.append(
+            f"{len(incomplete)} check(s) are incomplete because of collection errors ({', '.join(incomplete)}). "
+            "Fix the cause and collect again before FINAL."
+        )
+    elif not ctx["summary"].get("collection_errors_recorded"):
+        warnings.append(
+            "The snapshot doesn't record collection errors, so the findings can't show every API call "
+            "succeeded. Collect again with the current collector before FINAL."
         )
     pending = [m["milestone"] for m in ctx["milestones"] if not m["date"]]
     if pending:

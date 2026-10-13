@@ -95,6 +95,19 @@ step updates which row.
    like a "fixed" S3 finding when what actually happened is the resource is
    gone, not corrected).
 
+   A finding that disappears is only listed as no longer present when the
+   retest collected that check's data completely. A failed API call during
+   collection leaves an empty result that looks exactly like a deleted
+   resource, so the collector records each failure in the snapshot's
+   `collection_errors`, `run_checks.py` lists the checks that depend on a
+   failed call in `checks_incomplete` (and warns), and `diff_findings.py`
+   puts their missing findings under **NOT VERIFIED** instead. Fix the
+   cause (usually a missing permission or an unreachable region) and
+   collect again. For a deletion that the retest does show, keep
+   independent evidence of it too — the CloudTrail events for the delete
+   calls, or a direct `describe` in each region — since an empty result
+   alone shows absence, not who removed the resource or when.
+
 6. **Update the report and evidence package.** Rebuild the `.docx` report
    from the retest findings with `scripts/build_report.py`:
    ```bash
@@ -193,7 +206,10 @@ work has stopped. Do this once, when the engagement is actually done:
    in `exceptions.json` per `accepting-findings-process.md` — "we're not
    going to get to this one" is not a reason to finalize, it's a reason to
    either fix it, accept it, or keep the report `DRAFT` until one of those
-   happens.
+   happens. The final retest must also have no incomplete checks:
+   `build_report.py` warns when a `FINAL` build's findings have
+   `checks_incomplete`, or come from a snapshot that doesn't record
+   collection errors at all.
 
 2. **Fill in the last two Testing Narrative rows in `engagement-info.md`:**
    `Findings Review` (who reviewed the final findings and when — this can

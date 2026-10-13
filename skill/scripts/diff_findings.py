@@ -12,6 +12,12 @@ Usage:
     python3 diff_findings.py findings-baseline.json findings-retest.json
     python3 diff_findings.py findings-baseline.json findings-retest.json -o diff.json
 
+A baseline finding with no entry in the retest is only listed as no longer
+present when the retest collected that check's data completely. If the
+check was incomplete (an API call it depends on failed during collection;
+see the retest's summary.checks_incomplete) or skipped, the finding is
+listed as not verified instead: the resource may still exist, uncollected.
+
 Exit status is 2 if any finding regressed (was passing/accepted, now
 failing), so this can gate a CI/automation step; 0 otherwise.
 """
@@ -55,7 +61,12 @@ def diff(baseline, retest):
             unchanged_pass.append((b, r))
 
     new_findings = [r_idx[k] for k in sorted(r_keys - b_keys)]
-    removed_resources = [b_idx[k] for k in sorted(b_keys - r_keys)]
+    # A check the retest couldn't collect fully can't show a resource is gone.
+    summary = retest.get("summary", {})
+    unverifiable = set(summary.get("checks_incomplete") or {}) | set(summary.get("checks_skipped") or [])
+    removed_resources, not_verified = [], []
+    for k in sorted(b_keys - r_keys):
+        (not_verified if k[0] in unverifiable else removed_resources).append(b_idx[k])
 
     return {
         "regressed": regressed,
@@ -64,6 +75,7 @@ def diff(baseline, retest):
         "unchanged_pass": unchanged_pass,
         "new_findings": new_findings,
         "removed_resources": removed_resources,
+        "not_verified": not_verified,
     }
 
 
@@ -82,6 +94,12 @@ def print_report(baseline, retest, d):
             "pass/fail status is framework-independent (only the displayed "
             "control refs differ), so this diff is still valid, but don't "
             "expect the control references to line up between runs."
+        )
+    if not retest["summary"].get("collection_errors_recorded"):
+        print(
+            "NOTE: the retest's snapshot doesn't record collection errors (collected before the "
+            "collector did), so a finding missing from it may be a failed API call rather than a "
+            "deleted resource."
         )
     print()
 
@@ -119,6 +137,16 @@ def print_report(baseline, retest, d):
             "this is actually resource deletion and not a collection gap before treating it as resolved:"
         )
         for f in d["removed_resources"]:
+            print(f"  - {_fmt(f)}")
+        print()
+
+    if d["not_verified"]:
+        print(
+            f"NOT VERIFIED ({len(d['not_verified'])}) - was in the baseline, has no entry in the retest, "
+            "but the retest couldn't collect this check's data completely (see its summary's "
+            "checks_incomplete / checks_skipped). Collect again before treating these as resolved:"
+        )
+        for f in d["not_verified"]:
             print(f"  - {_fmt(f)}")
         print()
 
