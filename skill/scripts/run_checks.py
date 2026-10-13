@@ -51,8 +51,11 @@ back with no explanation.
 """
 
 import argparse
+import copy
+import hashlib
 import inspect
 import json
+import os
 import re
 import sys
 from datetime import datetime, timezone
@@ -574,6 +577,96 @@ def _apply_accepted_findings(findings, exceptions, snap):
         if expired:
             warnings.append(f"{label} expired on {rule['review_by']}; matching findings left as fail.")
     return warnings
+
+
+# Values the audit role can't read but an auditor can confirm from evidence
+# collected in the account that owns the resource (an organization trail's
+# bucket in the management account, for example). Each check maps to the
+# snapshot entries it reads, the field naming the resource, and the field
+# holding the value.
+VERIFIED_VALUE_TARGETS = {
+    "cloudtrail_bucket_access_logging": {
+        "items": lambda snap: (snap.get("cloudtrail") or {}).get("trails") or [],
+        "key": "s3_bucket_name",
+        "field": "s3_bucket_access_logging_enabled",
+    },
+}
+VERIFIED_VALUE_REQUIRED_FIELDS = ("check_id", "resource", "value", "verified_by", "verified_date", "evidence", "sha256", "note")
+# Evidence further than this from the snapshot's collected_at describes a
+# different point in time, so it isn't used.
+VERIFIED_VALUE_MAX_AGE_DAYS = 30
+
+
+def _sha256(path):
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(65536), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _validate_verified_value(entry, snap, base_dir):
+    """Return a reason string if a verified_values entry must not be used,
+    or None if it's usable."""
+    missing = [f for f in VERIFIED_VALUE_REQUIRED_FIELDS
+               if entry.get(f) is None or (isinstance(entry.get(f), str) and not entry[f].strip())]
+    if missing:
+        return f"missing required field(s): {', '.join(missing)}"
+    if entry["check_id"] not in VERIFIED_VALUE_TARGETS:
+        return (f"{entry['check_id']} doesn't take verified values "
+                f"(supported: {', '.join(VERIFIED_VALUE_TARGETS)})")
+    if not isinstance(entry["value"], bool):
+        return f"value {entry['value']!r} must be true or false"
+    verified = _parse_iso_date(entry["verified_date"])
+    if not verified:
+        return f"verified_date {entry['verified_date']!r} is not a YYYY-MM-DD date"
+    gap = abs((verified - _reference_now(snap).date()).days)
+    if gap > VERIFIED_VALUE_MAX_AGE_DAYS:
+        return (f"verified_date {entry['verified_date']} is {gap} days from the snapshot's collection "
+                f"(limit {VERIFIED_VALUE_MAX_AGE_DAYS}); collect the evidence again")
+    if base_dir is None:
+        return "the evidence file can't be checked without the exceptions file's location"
+    path = os.path.join(base_dir, entry["evidence"])
+    if not os.path.isfile(path):
+        return f"evidence file {entry['evidence']} not found next to the exceptions file"
+    if _sha256(path) != str(entry["sha256"]).lower():
+        return f"evidence file {entry['evidence']} doesn't match its sha256"
+    return None
+
+
+def _apply_verified_values(snap, exceptions, base_dir):
+    """Fill values the collector left unknown from verified_values entries.
+    A value the collector did read is never replaced. Returns (snapshot,
+    applied, warnings): the snapshot is a copy when anything was filled in,
+    and applied is {check_id: {resource: entry}}."""
+    entries = (exceptions or {}).get("verified_values") or []
+    warnings = []
+    applied = {}
+    out = snap
+    for i, entry in enumerate(entries):
+        label = f"verified_values[{i}] ({entry.get('check_id')} / {entry.get('resource')})"
+        reason = _validate_verified_value(entry, snap, base_dir)
+        if reason:
+            warnings.append(f"{label} not applied: {reason}.")
+            continue
+        target = VERIFIED_VALUE_TARGETS[entry["check_id"]]
+        idx = [n for n, item in enumerate(target["items"](snap)) if item.get(target["key"]) == entry["resource"]]
+        if not idx:
+            warnings.append(f"{label} matched nothing in the snapshot; the resource may have been renamed or removed.")
+            continue
+        collected = [target["items"](snap)[n].get(target["field"]) for n in idx]
+        if any(v is not None for v in collected):
+            note = ("it disagrees with the collected value; check the evidence"
+                    if any(v is not None and v != entry["value"] for v in collected)
+                    else "the collector read it, so it's no longer needed")
+            warnings.append(f"{label} not applied: {note}.")
+            continue
+        if out is snap:
+            out = copy.deepcopy(snap)
+        for n in idx:
+            target["items"](out)[n][target["field"]] = entry["value"]
+        applied.setdefault(entry["check_id"], {})[entry["resource"]] = entry
+    return out, applied, warnings
 
 
 # ---------------------------------------------------------------------------
@@ -1271,23 +1364,38 @@ CHECK_SECTIONS = {check_id: {"iam", "organization"} if check_id.startswith("root
                   for check_id in CHECK_OPERATIONS}
 
 
-def _incomplete_checks(snapshot, check_ids):
+def _covered_by(error, resources):
+    """The resource among `resources` whose value a verified_values entry
+    supplied in place of this failed call, or None."""
+    call = error.get("call") or ""
+    return next((r for r in resources if call.endswith(f"({r})")), None)
+
+
+def _incomplete_checks(snapshot, check_ids, covered=None):
     """{check_id: [failed call, ...]} for each check whose data depends on an
     API call that failed during collection. An error without a section
-    (from an older collector) matches on operation alone."""
+    (from an older collector) matches on operation alone. A failed call
+    whose value came from verified_values (covered: {check_id: resources})
+    doesn't count."""
     errors = snapshot.get("collection_errors") or []
+    covered = covered or {}
     incomplete = {}
     for check_id in check_ids:
         calls = [f"{e.get('call')}: {e.get('error_code')}" for e in errors
                  if e.get("operation") in CHECK_OPERATIONS.get(check_id, ())
-                 and (e.get("section") is None or e["section"] in CHECK_SECTIONS[check_id])]
+                 and (e.get("section") is None or e["section"] in CHECK_SECTIONS[check_id])
+                 and not _covered_by(e, covered.get(check_id, ()))]
         if calls:
             incomplete[check_id] = calls
     return incomplete
 
 
-def run(snapshot, framework, exceptions=None):
+def run(snapshot, framework, exceptions=None, base_dir=None):
+    """base_dir is the exceptions file's directory; verified_values evidence
+    paths are relative to it."""
     exceptions, attestation_warnings = _validate_root_attestation(exceptions or {})
+    collected_snapshot = snapshot
+    snapshot, verified, verified_warnings = _apply_verified_values(snapshot, exceptions, base_dir)
     findings = []
     checks_evaluated = []
     checks_skipped = []
@@ -1322,9 +1430,20 @@ def run(snapshot, framework, exceptions=None):
                 "evidence": r["evidence"],
             })
 
-    exceptions_warnings = attestation_warnings + _apply_accepted_findings(findings, exceptions, snapshot)
+    for f in findings:
+        entry = verified.get(f["check_id"], {}).get(f["resource"])
+        if entry:
+            f["verified_value"] = True
+            f["evidence"] += (
+                f" Not readable by the audit role; value verified by {entry['verified_by']} on "
+                f"{entry['verified_date']}: {entry['note']} (evidence: {entry['evidence']}, "
+                f"SHA-256 {entry['sha256']})."
+            )
 
-    incomplete = _incomplete_checks(snapshot, checks_evaluated)
+    exceptions_warnings = (attestation_warnings + verified_warnings
+                           + _apply_accepted_findings(findings, exceptions, snapshot))
+
+    incomplete = _incomplete_checks(collected_snapshot, checks_evaluated, verified)
     for f in findings:
         if f["check_id"] in incomplete:
             f["collection_incomplete"] = True
@@ -1352,6 +1471,14 @@ def run(snapshot, framework, exceptions=None):
         "collection_errors_recorded": "collection_errors" in snapshot,
         "collection_errors": snapshot.get("collection_errors"),
         "checks_incomplete": incomplete,
+        # Failed calls whose value came from verified_values instead.
+        "verified_values": [
+            {"check_id": c, "resource": r, "value": e["value"], "verified_by": e["verified_by"],
+             "verified_date": e["verified_date"], "evidence": e["evidence"], "sha256": e["sha256"],
+             "covers": [err.get("call") for err in (collected_snapshot.get("collection_errors") or [])
+                        if _covered_by(err, (r,))]}
+            for c, by_resource in verified.items() for r, e in by_resource.items()
+        ],
         "exceptions_applied": bool(exceptions),
         "exceptions_warnings": exceptions_warnings,
     }
@@ -1372,7 +1499,8 @@ def main():
 
     exceptions = load_exceptions(args.exceptions)
 
-    result = run(snapshot, args.framework, exceptions)
+    base_dir = os.path.dirname(os.path.abspath(args.exceptions)) if args.exceptions else None
+    result = run(snapshot, args.framework, exceptions, base_dir)
 
     with open(args.output, "w") as f:
         json.dump(result, f, indent=2, default=str)
