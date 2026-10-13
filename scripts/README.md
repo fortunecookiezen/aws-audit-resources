@@ -6,11 +6,15 @@ Most, if not all of this is designed to be run from AWS CloudShell sessions
 
 ### assume remote role for auditing purposes
 
-Before assuming the remote role _remember to export AUDIT_ROLE_ARN_
+Before assuming the remote role _remember to export AUDIT_ROLE_ARN and
+AUDIT_SESSION_NAME_. Set the session name to who is collecting and when
+(`<auditor>-<YYYYMMDD>`), so the audited account's CloudTrail shows who made
+each call - see `../skill/SKILL.md`, Step 2.
 
 ```bash
+export AUDIT_SESSION_NAME="<auditor>-<YYYYMMDD>"   # e.g. jdoe-20261013
 eval $(aws sts assume-role --role-arn $AUDIT_ROLE_ARN \
---role-session-name audit-session | jq -r '.Credentials | "export AWS_ACCESS_KEY_ID=\(.AccessKeyId)\nexport AWS_SECRET_ACCESS_KEY=\(.SecretAccessKey)\nexport AWS_SESSION_TOKEN=\(.SessionToken)\n"')
+--role-session-name "$AUDIT_SESSION_NAME" | jq -r '.Credentials | "export AWS_ACCESS_KEY_ID=\(.AccessKeyId)\nexport AWS_SECRET_ACCESS_KEY=\(.SecretAccessKey)\nexport AWS_SESSION_TOKEN=\(.SessionToken)\n"')
 ```
 
 ## aws cloudwatch
