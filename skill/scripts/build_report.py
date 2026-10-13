@@ -562,17 +562,32 @@ def build_appendix(doc, ctx):
     elif not s.get("collection_errors"):
         doc.add_paragraph("None: every API call made during collection succeeded.")
     else:
+        covered = {call: v for v in s.get("verified_values") or [] for call in v.get("covers") or []}
         doc.add_paragraph(
             "These API calls failed during collection. A check marked incomplete above covers only what was "
             "collected: a resource the failed call would have returned is missing from its results, not passing."
+            + (" Where a value is shown as verified from evidence, the auditor confirmed it in the account that "
+               "owns the resource, and the check used that value." if covered else "")
         )
-        add_table(
-            doc,
-            ["Call", "Error"],
-            [(e.get("call", ""), e.get("error_code", "")) for e in s["collection_errors"]],
-            [4.0, 2.5],
-            font_size=8,
-        )
+        if covered:
+            add_table(
+                doc,
+                ["Call", "Error", "Value verified from evidence"],
+                [(e.get("call", ""), e.get("error_code", ""),
+                  (f"{covered[e.get('call')]['evidence']} ({covered[e.get('call')]['verified_by']}, "
+                   f"{covered[e.get('call')]['verified_date']})") if e.get("call") in covered else "—")
+                 for e in s["collection_errors"]],
+                [2.6, 1.2, 2.7],
+                font_size=8,
+            )
+        else:
+            add_table(
+                doc,
+                ["Call", "Error"],
+                [(e.get("call", ""), e.get("error_code", "")) for e in s["collection_errors"]],
+                [4.0, 2.5],
+                font_size=8,
+            )
 
     manual = ctx["manual_checks"]
     if manual:

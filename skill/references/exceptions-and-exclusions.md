@@ -125,11 +125,23 @@ re-running with a corrected (or removed) exceptions file — see
       "approved_date": "2026-10-08",
       "review_by": "2027-04-08"
     }
+  ],
+  "verified_values": [
+    {
+      "check_id": "cloudtrail_bucket_access_logging",
+      "resource": "example-org-trail-bucket",
+      "value": false,
+      "verified_by": "jamesp",
+      "verified_date": "2026-10-13",
+      "evidence": "evidence/example-org-trail-bucket-logging-20261013T175842Z.json",
+      "sha256": "<sha256 of the evidence file>",
+      "note": "aws s3api get-bucket-logging --query LoggingEnabled run in the management account 111122223333 (caller identity in the file) returned null."
+    }
   ]
 }
 ```
 
-All four top-level keys are optional — include only what applies to this
+All five top-level keys are optional — include only what applies to this
 account. An auto-detected `root_credentials_management_enabled: true` in the
 snapshot takes precedence over `root_credentials_centrally_managed` here, so
 you don't need this block at all when the collector could confirm it itself.
@@ -190,6 +202,36 @@ you don't need this block at all when the collector could confirm it itself.
   renamed or deleted), or matches every resource of its check. Read these on
   every run: a rule that silently stops matching looks resolved in the
   exceptions file while the finding fails again in the report.
+
+- **`verified_values`** — values the audit role can't read, confirmed
+  from evidence collected in the account that owns the resource. The usual
+  case is an organization trail's bucket in the management or log archive
+  account: asking that account to grant an engagement's audit role
+  `s3:GetBucketLogging` is often unreasonable, and the auditor (or the
+  bucket's owner, with the auditor watching) can run the read directly
+  instead. Only `cloudtrail_bucket_access_logging` takes verified values;
+  `resource` is the bucket name. All eight fields are required:
+  - `value` — `true` (logging on) or `false` (logging off). For a bucket
+    with logging off, `get-bucket-logging` prints nothing, so collect it as
+    `aws s3api get-bucket-logging --bucket <bucket> --query LoggingEnabled
+    --output json`, which prints `null`, with `aws sts get-caller-identity`
+    in the same file so it shows which account and role ran it.
+  - `verified_by`, `verified_date` — who ran it and when (`YYYY-MM-DD`).
+    Evidence more than 30 days from the snapshot's `collected_at` is not
+    used; collect it again.
+  - `evidence`, `sha256` — the file's path relative to the exceptions file,
+    and its SHA-256. `run_checks.py` hashes the file and doesn't apply the
+    entry if it's missing or doesn't match.
+  - `note` — what was run, where, and what it returned.
+
+  A value is only filled in where the collector left it unknown; one the
+  collector read always wins, and an entry that disagrees with it is
+  reported. The check then evaluates the value like any other (a bucket
+  with logging off fails), the finding's evidence says it was verified out
+  of band and by whom, and the failed collection call it covers no longer
+  marks the check incomplete. The report's collection errors table shows
+  which evidence file covered each call. This is not an acceptance: it
+  supplies a fact, and the finding passes or fails on it.
 
 ## From the documentation request
 
