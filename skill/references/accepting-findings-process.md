@@ -86,7 +86,8 @@ in advance should cover the majority of an account's known exceptions.
      and its attached and inline policies (with the inline documents);
      `management` mode, run in the management account, captures how the
      account joined the organization, which service-managed StackSets
-     target it (with each one's template and parameter values), and who is
+     target it (with each one's template and parameter values, secret-looking
+     values redacted), and who is
      assigned each IAM Identity Center permission set provisioned to it.
      Check that:
      - `OrganizationAccountAccessRole` trusts only the management account,

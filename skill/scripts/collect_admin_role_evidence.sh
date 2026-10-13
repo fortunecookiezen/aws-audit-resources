@@ -32,7 +32,12 @@
 #       service-managed StackSets have instances in the member account. For
 #       each of those StackSets it records the template body and parameter
 #       values (describe-stack-set), so a role a StackSet deploys - and the
-#       policy it grants - is shown as defined, not only as deployed. It
+#       policy it grants - is shown as defined, not only as deployed.
+#       Parameter values whose names look secret (ExternalId, *Secret*,
+#       *Password*, *Token*, API/access/private keys) are replaced with
+#       "[REDACTED]" and marked "redacted": true; NoEcho values already come
+#       back as "****". Defaults written into a template body aren't
+#       redacted. It
 #       also records every IAM Identity Center permission set provisioned to
 #       the member account: its managed and inline policies, and who is
 #       assigned it - users by user name, groups by name with their members.
@@ -257,13 +262,20 @@ collect_management() {
       '. + [{stack_set_name: $name, instances: ($inst.Summaries // $inst)}]' <<<"$instances")"
     # Only StackSets deployed to this account (or whose instances couldn't be
     # listed) need their template in this account's evidence.
+    # Parameter values that look secret are redacted: an external ID or
+    # token isn't evidence of anything, and the file is meant to be shared
+    # with reviewers. No hash is kept either - a short password's hash can
+    # be brute-forced.
     if jq -e '(.Summaries | type) != "array" or (.Summaries | length) > 0' >/dev/null <<<"$inst"; then
       detail="$(aws_json cloudformation describe-stack-set --stack-set-name "$name" --call-as "$call_as")"
       templates="$(jq --arg name "$name" --argjson d "$detail" \
         '. + [if $d.error then {stack_set_name: $name, error: $d.error}
               else {stack_set_name: $name,
                     description: ($d.StackSet.Description // null),
-                    parameters: ($d.StackSet.Parameters // []),
+                    parameters: [($d.StackSet.Parameters // [])[]
+                      | if ((.ParameterKey // "") | test("external.?id|secret|passw|token|(api|access|private).?key"; "i"))
+                           and ((.ParameterValue // "") | test("^\\**$") | not)
+                        then .ParameterValue = "[REDACTED]" | .redacted = true else . end],
                     capabilities: ($d.StackSet.Capabilities // []),
                     template_body: ($d.StackSet.TemplateBody // null)} end]' <<<"$templates")"
     fi
@@ -303,6 +315,7 @@ collect_management() {
            ([(if (.template_body // "") | test("AWS::IAM::(Role|User|Group)\\b") then "creates IAM principals" else empty end),
              (if (.template_body // "") | test("AdministratorAccess|[\"\u0027]?Action[\"\u0027]?\\s*:\\s*[\"\u0027]\\*[\"\u0027]") then "mentions AdministratorAccess or Action \"*\" - read it" else empty end)]
             | if length == 0 then "no IAM principals found" else join("; ") end)
+           + ([.parameters[]? | select(.redacted) | .ParameterKey] | if length > 0 then " (redacted parameters: \(join(", ")))" else "" end)
          end' <<<"$templates"
   jq -r 'if .error then "WARNING: Identity Center not recorded: \(.error)"
          else .permission_sets[] | "Permission set \(.name): policies \([.managed_policies[]?.Name] + (if .inline_policy then ["inline"] else [] end) | join(", ")); assigned to \([.assigned_to[] | if .type == "USER" then "user \(.user_name // .id)" else "group \(.group_name // .id) (\(.members | join(", ")))" end] | join("; "))"
