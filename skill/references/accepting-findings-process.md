@@ -86,8 +86,10 @@ in advance should cover the majority of an account's known exceptions.
      and its attached and inline policies (with the inline documents);
      `management` mode, run in the management account, captures how the
      account joined the organization, which service-managed StackSets
-     target it, and who is assigned each IAM Identity Center permission set
-     provisioned to it. Check that:
+     target it (with each one's template and parameter values, secret-looking
+     values redacted), and who is
+     assigned each IAM Identity Center permission set provisioned to it.
+     Check that:
      - `OrganizationAccountAccessRole` trusts only the management account,
        and the account's `JoinedMethod` is `CREATED`. If it's `INVITED`,
        someone created the role by hand, so it needs the same evidence as
@@ -96,13 +98,20 @@ in advance should cover the majority of an account's known exceptions.
        `AWSServiceRoleForCloudFormationStackSetsOrgAdmin` in the management
        (or delegated-admin) account, and an ACTIVE service-managed StackSet
        still has instances in this account. If none does, the role is left
-       over: remove it rather than accept it. Read the StackSet
-       descriptions too: a StackSet that creates another admin role (a
-       deployment or vendor role) means that role belongs in the request's
-       §3 table, not under "None". `member` mode lists every role a
-       StackSet's stack created in the account, marked with the stack that
-       created it, so these roles appear in the evidence even when nobody
-       listed them. StackSet stacks are regional: set `STACK_REGIONS` to
+       over: remove it rather than accept it. Read the StackSet templates
+       too (the management-mode output flags those that create IAM
+       principals or mention `AdministratorAccess` or `Action: "*"`, but
+       it's a text match, so read the rest as well): a StackSet that creates
+       another admin role (a deployment or vendor role) means that role
+       belongs in the request's §3 table, not under "None". `member` mode
+       lists every role a StackSet's stack created in the account, marked
+       with the stack that created it, so these roles appear in the evidence
+       even when nobody listed them, and the matching template shows the
+       policy the role is meant to hold. A StackSet-deployed role can't be
+       removed or narrowed from the member account: deleting it there only
+       drifts the stack, and auto-deployment recreates it. The fix is in the
+       management account: delete the account's stack instance, or change
+       the template. StackSet stacks are regional: set `STACK_REGIONS` to
        every region the management-mode output shows instances in.
      - each `AWSReservedSSO_<name>_<hash>` role trusts only the account's
        `AWSSSO_…_DO_NOT_DELETE` SAML provider, and the matching permission
