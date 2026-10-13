@@ -45,3 +45,7 @@ terraform.rc
 
 # Python virtual environments (see skill/requirements.txt)
 .venv/
+
+# Python bytecode (written whenever a script is run or imported)
+__pycache__/
+*.pyc

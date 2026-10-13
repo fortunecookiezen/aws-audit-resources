@@ -18,7 +18,11 @@ Usage:
 Reads the JSON produced by collect_aws_data.py (or an equivalent hand-built file
 matching its schema) and runs the 27 checks documented in
 references/check-catalog.md. Any check whose required snapshot data is missing
-is marked "skipped" rather than guessed at or silently dropped.
+is marked "skipped" rather than guessed at or silently dropped. A check that
+ran, but on data where one of the API calls it depends on failed during
+collection (the snapshot's collection_errors), is listed in the summary's
+checks_incomplete: its results cover only what was collected, and a resource
+the failed call would have returned is missing rather than passing.
 
 One of those 27 (default_vpc_exists) is best-practice-only: no CIS AWS
 Foundations Benchmark, SOC 2, or ISO 27001 control actually requires deleting
@@ -1200,6 +1204,62 @@ CHECK_FUNCS = {
 }
 
 
+# The collector API operations each check's data comes from (the "operation"
+# of a collection_errors entry). A failed call for any of them means the
+# check's results may be missing resources.
+_CREDENTIAL_REPORT = {"get_credential_report", "list_users"}
+_ROOT = {"get_account_summary", "list_virtual_mfa_devices", "get_credential_report",
+         "describe_organization", "list_organizations_features"}
+_ADMIN_POLICY = {"list_policies", "get_policy_version", "list_entities_for_policy",
+                 "list_users", "list_roles", "list_groups",
+                 "list_user_policies", "list_role_policies", "list_group_policies",
+                 "get_user_policy", "get_role_policy", "get_group_policy"}
+_TRAILS = {"describe_trails", "get_trail_status", "get_event_selectors"}
+CHECK_OPERATIONS = {
+    "root_mfa_enabled": _ROOT,
+    "root_hardware_mfa": _ROOT,
+    "root_no_access_keys": _ROOT,
+    "root_not_used_routinely": _ROOT,
+    "account_security_contact_registered": {"get_alternate_contact"},
+    "iam_password_policy_length": {"get_account_password_policy"},
+    "iam_password_policy_reuse": {"get_account_password_policy"},
+    "iam_user_mfa_console_access": _CREDENTIAL_REPORT,
+    "iam_credentials_unused_45d": _CREDENTIAL_REPORT | _ROOT,
+    "iam_access_key_rotation_90d": _CREDENTIAL_REPORT,
+    "iam_permissions_via_group_only": {"list_users", "list_attached_user_policies",
+                                       "list_user_policies", "list_groups_for_user"},
+    "iam_no_full_admin_policy": _ADMIN_POLICY,
+    "iam_support_role_exists": {"list_entities_for_policy"},
+    "s3_block_public_access": {"list_buckets", "get_public_access_block"},
+    "s3_bucket_https_only": {"list_buckets", "get_bucket_policy"},
+    "s3_bucket_mfa_delete": {"list_buckets", "get_bucket_versioning"},
+    "s3_bucket_logging_enabled": {"list_buckets", "get_bucket_logging"},
+    "cloudtrail_multi_region_enabled": _TRAILS,
+    "cloudtrail_log_file_validation": _TRAILS,
+    "cloudtrail_bucket_access_logging": _TRAILS | {"get_bucket_logging"},
+    "cloudtrail_kms_encryption": _TRAILS,
+    "vpc_flow_logs_enabled": {"describe_vpcs", "describe_flow_logs"},
+    "sg_no_open_admin_ports_ipv4": {"describe_security_groups"},
+    "sg_no_open_admin_ports_ipv6": {"describe_security_groups"},
+    "sg_default_restricts_traffic": {"describe_security_groups"},
+    "ec2_imdsv2_required": {"describe_instances"},
+    "default_vpc_exists": {"describe_vpcs"},
+}
+
+
+def _incomplete_checks(snapshot, check_ids):
+    """{check_id: [failed call, ...]} for each check whose data depends on an
+    API call that failed during collection."""
+    errors = snapshot.get("collection_errors") or []
+    incomplete = {}
+    for check_id in check_ids:
+        calls = [f"{e.get('call')}: {e.get('error_code')}" for e in errors
+                 if e.get("operation") in CHECK_OPERATIONS.get(check_id, ())]
+        if calls:
+            incomplete[check_id] = calls
+    return incomplete
+
+
 def run(snapshot, framework, exceptions=None):
     exceptions, attestation_warnings = _validate_root_attestation(exceptions or {})
     findings = []
@@ -1238,6 +1298,11 @@ def run(snapshot, framework, exceptions=None):
 
     exceptions_warnings = attestation_warnings + _apply_accepted_findings(findings, exceptions, snapshot)
 
+    incomplete = _incomplete_checks(snapshot, checks_evaluated)
+    for f in findings:
+        if f["check_id"] in incomplete:
+            f["collection_incomplete"] = True
+
     failed = [f for f in findings if f["status"] == "fail"]
     passed = [f for f in findings if f["status"] == "pass"]
     accepted = [f for f in findings if f["status"] == "accepted"]
@@ -1256,6 +1321,11 @@ def run(snapshot, framework, exceptions=None):
         "by_severity": by_severity,
         "checks_evaluated": checks_evaluated,
         "checks_skipped": checks_skipped,
+        # False: the snapshot predates collection_errors, so a failed call
+        # can't be told from an empty result.
+        "collection_errors_recorded": "collection_errors" in snapshot,
+        "collection_errors": snapshot.get("collection_errors"),
+        "checks_incomplete": incomplete,
         "exceptions_applied": bool(exceptions),
         "exceptions_warnings": exceptions_warnings,
     }
@@ -1286,10 +1356,17 @@ def main():
     print(
         f"{result['summary']['failed']} failed / {result['summary']['passed']} passed{accepted_suffix} "
         f"({len(result['summary']['checks_evaluated'])} checks evaluated, "
-        f"{len(result['summary']['checks_skipped'])} skipped for missing data). "
+        f"{len(result['summary']['checks_skipped'])} skipped for missing data, "
+        f"{len(result['summary']['checks_incomplete'])} incomplete because of collection errors). "
         f"Wrote {args.output}",
         file=sys.stderr,
     )
+    for check_id, calls in result["summary"]["checks_incomplete"].items():
+        print(f"WARNING: {check_id} is incomplete - failed during collection: {'; '.join(calls)}", file=sys.stderr)
+    if not result["summary"]["collection_errors_recorded"]:
+        print("NOTE: this snapshot has no collection_errors (collected before the collector recorded them), "
+              "so a failed API call can't be told from an empty result. Collect again to rule that out.",
+              file=sys.stderr)
     for w in result["summary"]["exceptions_warnings"]:
         print(f"WARNING: {w}", file=sys.stderr)
 
