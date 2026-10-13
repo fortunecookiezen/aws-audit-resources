@@ -1,7 +1,7 @@
 # Engagement Information
 
-*Copy this file to `engagement-info.md` in the engagement's
-`audit-runs/<account_id>-<YYYYMMDD>/` directory, alongside `exceptions.json`
+*Copy this file to `engagement-info.md` in the engagement directory
+(`$AUDIT_DIR`, see `evidence-handling.md`), alongside `exceptions.json`
 and the snapshot/findings files. `scripts/build_report.py` reads it
 directly and prints its contents on the report's cover page and in the
 Testing Narrative table - fill it in before the first report build, and
@@ -53,7 +53,10 @@ before filling the file in.*
 warns about any date in another format. Leave `Date` blank for a milestone that hasn't
 happened yet - the report shows it as "Pending" rather than inventing a
 date. Add a row only if you need an extra milestone beyond the five below;
-don't remove any of the five, even if blank.*
+don't remove any of the five, even if blank. In Notes for Test Start and
+each retest, record the tool version the scripts ran from (`git describe
+--always --dirty` in the tool checkout): findings depend on the code as well
+as the account.*
 
 | Milestone | Date (YYYY-MM-DD) | By | Notes |
 |---|---|---|---|
@@ -80,3 +83,17 @@ don't remove any of the five, even if blank.*
 
 *Free-text space for anything else about this engagement's timeline,
 scope, or methodology that doesn't fit the table above.*
+
+## Archive
+
+*Fill in the destination at kickoff, when you choose where the evidence
+will go, and the rest at close-out (`evidence-handling.md`, "Closing out an
+engagement"). An archive can't record its own SHA-256 or where it's stored,
+so those go in the engagement register, outside the archive; this section
+is the record from inside it.*
+
+- Destination: *(private engagement repository URL and tag, or "encrypted archive" and the evidence store it goes to)*
+- Encryption key: *(age recipient or GPG key ID; "n/a" for a repository)*
+- Retention period:
+- Delete by (YYYY-MM-DD):
+- Archived by and date (YYYY-MM-DD):

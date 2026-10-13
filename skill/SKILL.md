@@ -9,7 +9,7 @@ Audits the six core technical areas of an AWS account's security posture — IAM
 
 This skill lives inside the `aws-audit-resources` repository, alongside the IAM role templates (`cloudformation/`, `terraform/`) that provide the actual cross-account access the live-data path below uses. If you are working inside a checkout of that repo, the role templates referenced in Step 2 are at `../cloudformation/security-audit-role.yml` and `../terraform/security-audit-role/` relative to this skill directory.
 
-**Before collecting any real account data**, create a per-engagement working directory at the repo root — `audit-runs/<account_id>-<YYYYMMDD>/` (e.g. `../audit-runs/111122223333-20261006/` relative to this skill directory) — as part of Step 1, and write `engagement-info.md`, `exceptions.json`, the snapshot, findings, and report there, not into the repo's tracked directories. That path is covered by this repo's `.gitignore` for exactly this reason. See `references/evidence-handling.md` for the full clone → audit → evidence → private-repo-or-archive lifecycle, including what to do with the working directory once the audit is done. Fixture data under `skill/evals/` is synthetic and exempt from this — it's checked in deliberately, see `evals/fixtures/README.md`.
+**Before collecting any real account data**, create a per-engagement directory *outside* this repo — for example `~/audits/<client>/<account_id>-<YYYYMMDD>/`, referred to below as `$AUDIT_DIR` — as part of Step 1, and write `engagement-info.md`, `exceptions.json`, the snapshot, findings, and report there. Run the scripts from a checkout of this repo at a release tag or a known commit, and develop the tool in a different clone. (`audit-runs/` at this repo's root is gitignored as a backstop, so an engagement put there by mistake can't be committed, but it isn't the place for one.) See `references/evidence-handling.md` for the full lifecycle: the two trees, choosing a private engagement repository or an encrypted archive, and closing out the engagement with `scripts/archive_engagement.sh` once the report is final. Fixture data under `skill/evals/` is synthetic and exempt from this — it's checked in deliberately, see `evals/fixtures/README.md`.
 
 ## Step 1: Confirm framework and scope
 
@@ -23,8 +23,11 @@ Confirm the scope is the six core areas listed above. This skill does not audit 
 
 Create the engagement directory and its `engagement-info.md` now, from this skill directory:
 ```bash
-mkdir -p ../audit-runs/<account_id>-<YYYYMMDD>
-cp references/engagement-info-template.md ../audit-runs/<account_id>-<YYYYMMDD>/engagement-info.md
+export AUDIT_DIR=~/audits/<client>/<account_id>-<YYYYMMDD>
+mkdir -p "$AUDIT_DIR/evidence"
+cp references/engagement-info-template.md "$AUDIT_DIR/engagement-info.md"
+git -C "$AUDIT_DIR" init   # only if the evidence will live in a private engagement repository
+git -C .. describe --always --dirty   # the tool version; note it in the Testing Narrative for each run
 ```
 
 If this account's expected exceptions aren't already known (centrally-managed root credentials, named admin roles, other pre-reviewed risks), send the account/engagement owner `references/documentation-request-template.md` now rather than waiting to correct false positives after the report is built — see `references/accepting-findings-process.md`. When it comes back, save it in the engagement directory as `documentation-request-response.md` (or the signed PDF, `documentation-request-response.pdf`), and put its attachments — `list-organizations-features` output, console screenshots, tickets — under `evidence/` there. Then transcribe it into `exceptions.json` in the same directory, section by section, using the mapping in `references/exceptions-and-exclusions.md` ("From the documentation request"). `exceptions.json` is optional: if there are no exceptions, don't create it, and leave `--exceptions` off in Step 3.
@@ -65,9 +68,9 @@ This repo's `cloudformation/security-audit-role.yml` (or the equivalent `terrafo
    #   /opt/homebrew/bin/python3 -m venv .venv && source .venv/bin/activate   # Intel Macs: /usr/local/bin/python3
    python3 --version   # inside the venv; must be 3.10 or newer
    pip install -r requirements.txt
-   python3 scripts/collect_aws_data.py --all-regions -o ../audit-runs/<account_id>-<YYYYMMDD>/snapshot.json
+   python3 scripts/collect_aws_data.py --all-regions -o "$AUDIT_DIR/snapshot.json"
    # or, to have the script assume the role itself instead of pre-exporting credentials:
-   python3 scripts/collect_aws_data.py --all-regions --role-arn $AUDIT_ROLE_ARN --role-session-name "$AUDIT_SESSION_NAME" -o ../audit-runs/<account_id>-<YYYYMMDD>/snapshot.json
+   python3 scripts/collect_aws_data.py --all-regions --role-arn $AUDIT_ROLE_ARN --role-session-name "$AUDIT_SESSION_NAME" -o "$AUDIT_DIR/snapshot.json"
    ```
 
 ### B. Exported files
@@ -81,19 +84,19 @@ If an AWS MCP connector is available in this session, use it to gather the equiv
 ## Step 3: Run the checks
 
 ```bash
-python3 scripts/run_checks.py ../audit-runs/<account_id>-<YYYYMMDD>/snapshot.json \
-  --framework cis -o ../audit-runs/<account_id>-<YYYYMMDD>/findings.json
+python3 scripts/run_checks.py "$AUDIT_DIR/snapshot.json" \
+  --framework cis -o "$AUDIT_DIR/findings.json"
 # --framework ∈ {cis, well_architected, soc2, iso27001, all}
 ```
 
 This produces a findings list plus a summary (total findings, pass/fail/accepted counts, breakdown by severity, checks evaluated vs. skipped due to missing data). If a data source is partial (e.g., only an IAM credential report, no S3/CloudTrail/EC2 data), checks that can't be evaluated are marked skipped rather than guessed at — be honest in the report about what wasn't checked rather than implying full coverage. A check whose data came partly from a failed API call (the snapshot's `collection_errors`, also printed as `[warn]` lines while collecting) is listed as incomplete: its results are missing whatever that call would have returned. Fix the cause and collect again rather than reporting on it.
 
-A few checks (root MFA/access-keys/routine-use/unused-credentials, full-admin IAM policies) can produce false positives that aren't visible from the collected data alone — a root user with credentials centrally removed via AWS Organizations, or a deliberately-named admin role. Before treating those findings as real issues, check whether `--exceptions ../audit-runs/<account_id>-<YYYYMMDD>/exceptions.json` applies; see `references/exceptions-and-exclusions.md` for the file format and what it does (and doesn't) auto-detect, and `references/accepting-findings-process.md` for the process behind deciding what belongs in it:
+A few checks (root MFA/access-keys/routine-use/unused-credentials, full-admin IAM policies) can produce false positives that aren't visible from the collected data alone — a root user with credentials centrally removed via AWS Organizations, or a deliberately-named admin role. Before treating those findings as real issues, check whether `--exceptions "$AUDIT_DIR/exceptions.json"` applies; see `references/exceptions-and-exclusions.md` for the file format and what it does (and doesn't) auto-detect, and `references/accepting-findings-process.md` for the process behind deciding what belongs in it:
 
 ```bash
-python3 scripts/run_checks.py ../audit-runs/<account_id>-<YYYYMMDD>/snapshot.json \
-  --framework cis --exceptions ../audit-runs/<account_id>-<YYYYMMDD>/exceptions.json \
-  -o ../audit-runs/<account_id>-<YYYYMMDD>/findings.json
+python3 scripts/run_checks.py "$AUDIT_DIR/snapshot.json" \
+  --framework cis --exceptions "$AUDIT_DIR/exceptions.json" \
+  -o "$AUDIT_DIR/findings.json"
 ```
 
 `exceptions.json` can also accept a specific failing finding for any other check (a public website bucket, an intentionally open port) through `accepted_findings` rules, which need an approver and a `review_by` date — see `references/exceptions-and-exclusions.md`. Read every `WARNING:` line `run_checks.py` prints (also saved in `summary.exceptions_warnings`): it flags rules that were refused, have expired, match nothing, or look too broad.
@@ -102,8 +105,8 @@ python3 scripts/run_checks.py ../audit-runs/<account_id>-<YYYYMMDD>/snapshot.jso
 
 Build the Word report with `scripts/build_report.py`, from this skill directory, in the venv from Step 2 (if you used Step 2 B or C, create it as shown in Step 2 A.3 — `requirements.txt` includes the report builder's dependency):
 ```bash
-python3 scripts/build_report.py ../audit-runs/<account_id>-<YYYYMMDD>/findings.json
-# → ../audit-runs/<account_id>-<YYYYMMDD>/AWS_Security_Audit_<account_id>_<framework>_DRAFT.docx
+python3 scripts/build_report.py "$AUDIT_DIR/findings.json"
+# → $AUDIT_DIR/AWS_Security_Audit_<account_id>_<framework>_DRAFT.docx
 ```
 It reads `engagement-info.md` from the same directory (and `snapshot.json`, if present, for regions and the collecting identity), and fails with a clear message if `engagement-info.md` is missing, has a `Report Status` other than `DRAFT`/`FINAL`, or is missing a Testing Narrative row. For a retest, add `--label retest-1` (and optionally `--variant-note "Retest 1 - post-remediation"`); if the data came from exported files or a connector (Step 2 B/C) rather than the collector, say so with `--data-source "..."`. Run `python3 scripts/build_report.py --help` for all options.
 
@@ -117,7 +120,7 @@ The report it produces has this structure:
 6. **Detailed Findings by Area** — one subsection per core area (IAM, MFA, S3, CloudTrail/Logging, Security Groups/VPC, Root Account), each finding with control reference(s) for the chosen framework, evidence, and remediation
 7. **Appendix: Scope & Methodology** — which six areas were in scope, which controls were evaluated vs. skipped (including the "manual/extended checks" list from `references/check-catalog.md`), data source used, date of collection, and whether an exceptions file was applied (and if so, note its presence in the evidence package per Step 3)
 
-Write the report into the same `audit-runs/<account_id>-<YYYYMMDD>/` directory as the snapshot and findings — once the audit is complete, that whole directory is the evidence package. Follow `references/evidence-handling.md` for what to do with it next (a private evidence repo or an archive, never this repo).
+Write the report into the same `$AUDIT_DIR` as the snapshot and findings — once the audit is complete, that whole directory is the evidence package. Follow `references/evidence-handling.md` for what to do with it next (a private engagement repository or an encrypted archive, never this repo).
 
 ## Step 5: Remediate and retest
 
@@ -125,7 +128,7 @@ The audit doesn't end at the report. When findings get fixed, don't take anyone'
 
 ## Step 6: Finalize the report
 
-A report only becomes `FINAL` through this explicit step — never by editing the cover page directly, and never automatically just because remediation activity has stopped. In short: confirm every open finding is either fixed-and-retested or formally accepted, fill in the last two Testing Narrative rows and any blank auditor fields in `engagement-info.md`, set `Report Status: FINAL`, and rebuild — the cover banner, page header, and output filename all flip from `DRAFT` to `FINAL` automatically from that one field. Keep every superseded `DRAFT` in the evidence package rather than deleting it. Full procedure is in `references/remediation-and-retesting.md`'s "Finalizing" section.
+A report only becomes `FINAL` through this explicit step — never by editing the cover page directly, and never automatically just because remediation activity has stopped. In short: confirm every open finding is either fixed-and-retested or formally accepted, fill in the last two Testing Narrative rows and any blank auditor fields in `engagement-info.md`, set `Report Status: FINAL`, and rebuild — the cover banner, page header, and output filename all flip from `DRAFT` to `FINAL` automatically from that one field. Keep every superseded `DRAFT` in the evidence package rather than deleting it. Full procedure is in `references/remediation-and-retesting.md`'s "Finalizing" section. Then close out the engagement — manifest, private repository or encrypted archive, restore check, and removing local copies — per `references/evidence-handling.md`, "Closing out an engagement."
 
 ## Reference files
 
@@ -135,7 +138,7 @@ A report only becomes `FINAL` through this explicit step — never by editing th
 - `references/well-architected-security.md` — AWS Well-Architected Security Pillar (SEC01–SEC08) mapping
 - `references/soc2-mapping.md` — SOC 2 Trust Services Criteria (CC6.x/CC7.x) mapping
 - `references/iso27001-mapping.md` — ISO/IEC 27001:2022 Annex A control mapping
-- `references/evidence-handling.md` — what to do with a completed audit's output: the `audit-runs/` convention, and the private-repo-or-archive lifecycle for real evidence
+- `references/evidence-handling.md` — where an engagement lives (outside the tool checkout) and what happens to it when it's done: a private engagement repository or an encrypted archive, and the close-out checklist that `scripts/archive_engagement.sh` supports
 - `references/exceptions-and-exclusions.md` — the `--exceptions` file format: correcting root-account findings for AWS Organizations centralized root access management, a configurable root-reuse review window, marking named admin roles as a reviewed risk acceptance rather than an open finding, and how a root-management claim gets corroborated against the actual data before it's applied
 - `references/accepting-findings-process.md` — the governance process behind the exceptions file: who can accept a finding, what evidence they need, how a claim/data contradiction gets investigated, and how accepted findings get reviewed over time
 - `references/documentation-request-template.md` — fill-in template to request known exceptions (admin roles, root-management status, other pre-reviewed risks) from the account/engagement owner before the audit runs

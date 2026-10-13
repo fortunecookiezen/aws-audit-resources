@@ -12,7 +12,7 @@ and everything below the line go to the account/engagement owner. Keep the instr
 section, which tell the owner what to fill in and how.
 
 When the completed response comes back, the auditor saves it as
-`audit-runs/<account_id>-<YYYYMMDD>/documentation-request-response.md` (or
+`documentation-request-response.md` in the engagement directory (or
 `.pdf` if returned signed), with its attachments under `evidence/` in the same
 directory, then transcribes it into `exceptions.json` — see
 `exceptions-and-exclusions.md`, "From the documentation request," for which
