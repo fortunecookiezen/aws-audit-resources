@@ -38,9 +38,9 @@ Output schema (top level):
       "account_contacts": { ... },
       "organization": { ... },
       "collection_errors": [
-        {"call": "describe_vpcs(us-east-1)", "operation": "describe_vpcs",
-         "region": "us-east-1", "error_code": "UnauthorizedOperation",
-         "message": "..."}, ...
+        {"section": "ec2", "call": "describe_vpcs(us-east-1)",
+         "operation": "describe_vpcs", "region": "us-east-1",
+         "error_code": "UnauthorizedOperation", "message": "..."}, ...
       ]
     }
 
@@ -56,7 +56,11 @@ count their missing resources as fixed. An empty list means every call
 succeeded; a snapshot without the key predates this and can't say either way.
 Error codes that mean "not configured" (no password policy, no bucket policy,
 no public access block, no security contact) are the answer, not a failure,
-and aren't recorded.
+and aren't recorded. A per-resource value that couldn't be read is stored as
+unknown, not as a guess: a trail's s3_bucket_access_logging_enabled is null,
+and a bucket lists the fields it couldn't read in "unreadable" (e.g.
+["logging_enabled"]), so the checks leave that resource out instead of
+failing or passing it.
 """
 
 import argparse
@@ -133,8 +137,13 @@ def get_regions(session, args):
     return [session.region_name or "us-east-1"]
 
 
-# Every failed call, written to the snapshot as collection_errors.
+# Every failed call, written to the snapshot as collection_errors, tagged
+# with the snapshot section being collected when it failed.
 COLLECTION_ERRORS = []
+CURRENT_SECTION = None
+
+# _try's default for `failed`: return `default` on a failed call too.
+_SAME = object()
 
 # Error codes that mean "this isn't configured," not "the call failed": the
 # default value is the real answer, so they aren't collection errors.
@@ -155,6 +164,7 @@ def _operation(label):
 
 def _record_error(label, code, message, region=None):
     COLLECTION_ERRORS.append({
+        "section": CURRENT_SECTION,
         "call": label,
         "operation": _operation(label),
         "region": region,
@@ -164,7 +174,13 @@ def _record_error(label, code, message, region=None):
     print(f"  [warn] {label}: {code}", file=sys.stderr)
 
 
-def _try(fn, default=None, label="", region=None):
+def _try(fn, default=None, label="", region=None, failed=_SAME):
+    """fn() or, on error, `default`. A "not configured" error code returns
+    `default` as the real answer; any other failure is recorded and returns
+    `failed` - pass it when `default` would read as a real value (an empty
+    logging config meaning "logging off")."""
+    if failed is _SAME:
+        failed = default
     try:
         return fn()
     except ClientError as e:
@@ -173,12 +189,12 @@ def _try(fn, default=None, label="", region=None):
         if code in NOT_CONFIGURED.get(_operation(label), ()):
             return default
         _record_error(label, code, error.get("Message", str(e)), region)
-        return default
+        return failed
     except BotoCoreError as e:
         # Endpoint, connection and credential failures: before this, one
         # unreachable region ended the whole run.
         _record_error(label, type(e).__name__, str(e), region)
-        return default
+        return failed
 
 
 def _paginate(client, operation, key, **kwargs):
@@ -428,17 +444,25 @@ def collect_s3(session, account_id):
     buckets = []
     for b in buckets_resp:
         name = b["Name"]
-        entry = {"name": name}
+        entry = {"name": name, "unreadable": []}
+        failed = object()
 
-        entry["public_access_block"] = _try(
+        pab = _try(
             lambda: s3api.get_public_access_block(Bucket=name)["PublicAccessBlockConfiguration"],
-            default=None, label=f"get_public_access_block({name})",
+            default=None, label=f"get_public_access_block({name})", failed=failed,
         )
+        if pab is failed:
+            entry["unreadable"].append("public_access_block")
+            pab = None
+        entry["public_access_block"] = pab
 
         policy_text = _try(
             lambda: s3api.get_bucket_policy(Bucket=name)["Policy"],
-            default=None, label=f"get_bucket_policy({name})",
+            default=None, label=f"get_bucket_policy({name})", failed=failed,
         )
+        if policy_text is failed:
+            entry["unreadable"].append("has_https_only_deny")
+            policy_text = None
         has_https_only_deny = False
         if policy_text:
             try:
@@ -460,16 +484,21 @@ def collect_s3(session, account_id):
 
         versioning = _try(
             lambda: s3api.get_bucket_versioning(Bucket=name),
-            default={}, label=f"get_bucket_versioning({name})",
+            default={}, label=f"get_bucket_versioning({name})", failed=None,
         )
+        if versioning is None:
+            entry["unreadable"].append("mfa_delete")
+            versioning = {}
         entry["versioning_status"] = versioning.get("Status")
         entry["mfa_delete"] = versioning.get("MFADelete")
 
         logging_conf = _try(
             lambda: s3api.get_bucket_logging(Bucket=name),
-            default={}, label=f"get_bucket_logging({name})",
+            default={}, label=f"get_bucket_logging({name})", failed=None,
         )
-        entry["logging_enabled"] = "LoggingEnabled" in logging_conf
+        if logging_conf is None:
+            entry["unreadable"].append("logging_enabled")
+        entry["logging_enabled"] = None if logging_conf is None else "LoggingEnabled" in logging_conf
 
         buckets.append(entry)
 
@@ -512,11 +541,15 @@ def collect_cloudtrail(session):
         bucket = entry.get("s3_bucket_name")
         if not bucket:
             continue
+        # An organization trail's bucket is usually in another account (the
+        # management or log archive account), where this call is denied
+        # unless that bucket's policy allows it. Unknown stays None.
         logging_conf = _try(
             lambda: s3api.get_bucket_logging(Bucket=bucket),
-            default={}, label=f"get_bucket_logging({bucket})",
+            default={}, label=f"get_bucket_logging({bucket})", failed=None,
         )
-        entry["s3_bucket_access_logging_enabled"] = "LoggingEnabled" in logging_conf
+        if logging_conf is not None:
+            entry["s3_bucket_access_logging_enabled"] = "LoggingEnabled" in logging_conf
 
     out["trails"] = trail_entries
     return out
@@ -636,6 +669,7 @@ def collect_organization(session):
 
 
 def main():
+    global CURRENT_SECTION
     parser = argparse.ArgumentParser(description="Collect AWS account data for the aws-audit skill.")
     parser.add_argument("--profile", help="named AWS CLI profile to use")
     parser.add_argument("--role-arn", help="assume this role before collecting (alternative to pre-exported credentials)")
@@ -662,21 +696,27 @@ def main():
     }
 
     print("Collecting IAM...", file=sys.stderr)
+    CURRENT_SECTION = "iam"
     snapshot["iam"] = collect_iam(session)
 
     print("Collecting S3...", file=sys.stderr)
+    CURRENT_SECTION = "s3"
     snapshot["s3"] = collect_s3(session, account_id)
 
     print("Collecting CloudTrail...", file=sys.stderr)
+    CURRENT_SECTION = "cloudtrail"
     snapshot["cloudtrail"] = collect_cloudtrail(session)
 
     print("Collecting EC2/VPC...", file=sys.stderr)
+    CURRENT_SECTION = "ec2"
     snapshot["ec2"] = collect_ec2(session, regions)
 
     print("Collecting account contacts...", file=sys.stderr)
+    CURRENT_SECTION = "account_contacts"
     snapshot["account_contacts"] = collect_account_contacts(session)
 
     print("Collecting organization context...", file=sys.stderr)
+    CURRENT_SECTION = "organization"
     snapshot["organization"] = collect_organization(session)
 
     snapshot["collection_errors"] = COLLECTION_ERRORS

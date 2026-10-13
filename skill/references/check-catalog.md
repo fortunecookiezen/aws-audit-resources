@@ -23,7 +23,7 @@ Master list of the automated checks this skill runs. Each row maps one `check_id
 | `s3_bucket_logging_enabled` | S3 | Medium | 4.8, 4.9 | SEC04-BP01 | CC7.1 | A.8.15 |
 | `cloudtrail_multi_region_enabled` | Logging | Critical | 4.1 | SEC04-BP01 | CC7.1, CC7.2 | A.8.15 |
 | `cloudtrail_log_file_validation` | Logging | Medium | 4.2 | SEC04-BP01 | CC7.1 | A.5.28 |
-| `cloudtrail_bucket_access_logging` | Logging | Medium | 4.4 | SEC04-BP02 | CC6.1 | A.8.15 |
+| `cloudtrail_bucket_access_logging`⁴ | Logging | Medium | 4.4 | SEC04-BP02 | CC6.1 | A.8.15 |
 | `cloudtrail_kms_encryption` | Logging | Medium | 4.5 | SEC04-BP01 | CC6.1 | A.8.24 |
 | `vpc_flow_logs_enabled` | SG/VPC | Medium | 4.7 | SEC04-BP01 | CC7.2 | A.8.16 |
 | `sg_no_open_admin_ports_ipv4` | SG/VPC | Critical | 6.3 | SEC05-BP02 | CC6.1, CC6.6 | A.8.20 |
@@ -39,6 +39,8 @@ Master list of the automated checks this skill runs. Each row maps one `check_id
 ² Best-practice-only check: no CIS AWS Foundations Benchmark v7.0.0, SOC 2, or ISO 27001 control specifically requires deleting a region's default VPC (the `—` cells above aren't missing data, they're "this framework doesn't have a control for this"). It still runs and is reported under every framework, with that absence stated plainly in the report rather than a fabricated control ID — see `references/remediation-and-retesting.md`, "Findings outside the audited framework's scope."
 
 ³ Critical by default, but a bucket whose own Block Public Access setting is missing or incomplete is rated **Low** when the account-level setting has all four flags on: the account-level setting overrides bucket settings, so the bucket can't be made public. It still fails 3.1.4, which requires both levels; the evidence says why it's Low. This is the only check whose severity varies by result.
+
+⁴ An organization trail's bucket is usually in another account (the management or log archive account), where the audit role's `s3:GetBucketLogging` is denied unless that bucket's policy allows it. The collector then records the call in `collection_errors` and leaves the trail's logging as unknown, so the check has no result for it and is marked incomplete; it isn't failed for logging the role couldn't read. To evaluate it, either have the bucket's owner allow the audit role `s3:GetBucketLogging` on the bucket, or collect `aws s3api get-bucket-logging --bucket <bucket>` as evidence in the account that owns it.
 
 ## Manual/extended checks (not automated in v1)
 

@@ -958,6 +958,14 @@ def check_iam_support_role_exists(snap):
     return [{"resource": "account", "status": "pass" if exists else "fail", "evidence": f"support_role_exists={exists}"}]
 
 
+def _readable(buckets, field):
+    """The buckets whose `field` was read. One the collector couldn't read
+    (listed in its "unreadable") is left out rather than passed or failed;
+    the failed call is in collection_errors, which marks the check
+    incomplete."""
+    return [b for b in buckets if field not in (b.get("unreadable") or [])]
+
+
 def check_s3_block_public_access(snap):
     """CIS 3.1.4 requires all four Block Public Access flags at both the
     account and the bucket level, so a bucket missing them still fails. But
@@ -979,7 +987,7 @@ def check_s3_block_public_access(snap):
     )
     buckets = s3.get("buckets")
     if buckets is not None:
-        for b in buckets:
+        for b in _readable(buckets, "public_access_block"):
             pab = b.get("public_access_block")
             if pab is not None and all(pab.get(f) for f in flags):
                 results.append({"resource": b["name"], "status": "pass", "evidence": str(pab)})
@@ -1004,7 +1012,7 @@ def check_s3_bucket_https_only(snap):
         "resource": b["name"],
         "status": "pass" if b.get("has_https_only_deny") else "fail",
         "evidence": f"has_https_only_deny={b.get('has_https_only_deny')}",
-    } for b in buckets]
+    } for b in _readable(buckets, "has_https_only_deny")]
 
 
 def check_s3_bucket_mfa_delete(snap):
@@ -1015,7 +1023,7 @@ def check_s3_bucket_mfa_delete(snap):
         "resource": b["name"],
         "status": "pass" if b.get("mfa_delete") == "Enabled" else "fail",
         "evidence": f"versioning_status={b.get('versioning_status')}, mfa_delete={b.get('mfa_delete')}",
-    } for b in buckets]
+    } for b in _readable(buckets, "mfa_delete")]
 
 
 def check_s3_bucket_logging_enabled(snap):
@@ -1026,7 +1034,7 @@ def check_s3_bucket_logging_enabled(snap):
         "resource": b["name"],
         "status": "pass" if b.get("logging_enabled") else "fail",
         "evidence": f"logging_enabled={b.get('logging_enabled')}",
-    } for b in buckets]
+    } for b in _readable(buckets, "logging_enabled")]
 
 
 def check_cloudtrail_multi_region_enabled(snap):
@@ -1064,7 +1072,9 @@ def check_cloudtrail_bucket_access_logging(snap):
             "status": "pass" if val else "fail",
             "evidence": f"s3_bucket_access_logging_enabled={val}",
         })
-    return results or None
+    # Not "or None": a trail whose bucket couldn't be read is a collection
+    # error (marking this check incomplete), not missing data.
+    return results
 
 
 def check_cloudtrail_kms_encryption(snap):
@@ -1247,14 +1257,30 @@ CHECK_OPERATIONS = {
 }
 
 
+# The snapshot sections each check reads. The same operation can feed
+# different checks from different sections (get_bucket_logging for this
+# account's buckets in "s3", for a trail's bucket in "cloudtrail"), so a
+# failed call only affects the checks that read the section it failed in.
+CHECK_SECTIONS = {check_id: {"iam", "organization"} if check_id.startswith("root_") else
+                  {"iam", "organization"} if check_id == "iam_credentials_unused_45d" else
+                  {"account_contacts"} if check_id.startswith("account_") else
+                  {"iam"} if check_id.startswith("iam_") else
+                  {"s3"} if check_id.startswith("s3_") else
+                  {"cloudtrail"} if check_id.startswith("cloudtrail_") else
+                  {"ec2"}
+                  for check_id in CHECK_OPERATIONS}
+
+
 def _incomplete_checks(snapshot, check_ids):
     """{check_id: [failed call, ...]} for each check whose data depends on an
-    API call that failed during collection."""
+    API call that failed during collection. An error without a section
+    (from an older collector) matches on operation alone."""
     errors = snapshot.get("collection_errors") or []
     incomplete = {}
     for check_id in check_ids:
         calls = [f"{e.get('call')}: {e.get('error_code')}" for e in errors
-                 if e.get("operation") in CHECK_OPERATIONS.get(check_id, ())]
+                 if e.get("operation") in CHECK_OPERATIONS.get(check_id, ())
+                 and (e.get("section") is None or e["section"] in CHECK_SECTIONS[check_id])]
         if calls:
             incomplete[check_id] = calls
     return incomplete
