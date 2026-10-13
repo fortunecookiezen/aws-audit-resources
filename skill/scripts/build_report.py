@@ -45,7 +45,7 @@ from datetime import datetime, timezone
 try:
     from docx import Document
     from docx.enum.table import WD_TABLE_ALIGNMENT
-    from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_BREAK
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
     from docx.oxml import OxmlElement
     from docx.oxml.ns import qn
     from docx.shared import Inches, Pt, RGBColor
@@ -373,12 +373,14 @@ def build_cover(doc, ctx):
         [(m["milestone"], m["date"] or PENDING, m["by"], m["notes"]) for m in ctx["milestones"]],
         [1.6, 1.1, 1.4, 2.4],
     )
-    doc.add_paragraph().add_run().add_break(WD_BREAK.PAGE)
 
 
 def build_executive_summary(doc, ctx):
     s, findings = ctx["summary"], ctx["findings"]
-    doc.add_heading("1. Executive Summary", level=1)
+    # Start the body on a new page with the heading itself, not a break
+    # paragraph after the cover: a cover that fills page 1 pushes that
+    # paragraph onto page 2, leaving it blank.
+    doc.add_heading("1. Executive Summary", level=1).paragraph_format.page_break_before = True
     failed = [f for f in findings if f["status"] == "fail"]
     by_sev = s.get("by_severity") or {}
     crit_high = by_sev.get("Critical", 0) + by_sev.get("High", 0)
