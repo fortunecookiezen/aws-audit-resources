@@ -3,10 +3,10 @@
 build_report.py - build the aws-audit Word report from run_checks.py output.
 
 Usage (from the skill/ directory, in the venv - see requirements.txt):
-    python3 scripts/build_report.py ../audit-runs/<account_id>-<YYYYMMDD>/findings.json
+    python3 scripts/build_report.py "$AUDIT_DIR/findings.json"
 
     # A retest, labeled in the filename and on the cover:
-    python3 scripts/build_report.py ../audit-runs/<id>-<date>/findings-retest-1.json \\
+    python3 scripts/build_report.py "$AUDIT_DIR/findings-retest-1.json" \\
         --label retest-1 --variant-note "Retest 1 - post-remediation"
 
 Inputs, all from the engagement directory (the findings file's directory

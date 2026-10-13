@@ -273,7 +273,7 @@ Controls" — they're neither.
 ## Evidence handling
 
 Keep the exceptions file you used for a given audit run alongside its
-snapshot and findings in `audit-runs/<account_id>-<YYYYMMDD>/` (see
+snapshot and findings in the engagement directory (see
 `evidence-handling.md`) — it's part of what makes the report's judgment calls
 reproducible and reviewable later, not a one-off input to discard.
 

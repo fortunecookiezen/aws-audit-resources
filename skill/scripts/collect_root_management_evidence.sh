@@ -16,7 +16,7 @@
 #   - caller_identity:        aws sts get-caller-identity
 #   - organizations_features: aws iam list-organizations-features
 # and prints its SHA-256. In CloudShell, download the file (Actions >
-# Download file) and save it in the engagement's audit-runs/<account_id>-<YYYYMMDD>/evidence/
+# Download file) and save it in the engagement directory's evidence/
 # directory. The auditor takes exceptions.json's attested_by from
 # caller_identity and attested_date from collected_at - see
 # references/exceptions-and-exclusions.md, "From the documentation request."

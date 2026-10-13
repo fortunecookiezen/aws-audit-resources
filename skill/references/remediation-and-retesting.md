@@ -54,12 +54,12 @@ step updates which row.
    change gets made.
 
 3. **Re-collect fresh data — never reuse the old snapshot.** Run
-   `collect_aws_data.py` again into the *same* `audit-runs/<account_id>-<YYYYMMDD>/`
-   engagement directory, but under a new, distinct snapshot name so the
+   `collect_aws_data.py` again into the *same* engagement directory
+   (`$AUDIT_DIR`), but under a new, distinct snapshot name so the
    pre-remediation snapshot is preserved rather than overwritten:
    ```bash
    python3 scripts/collect_aws_data.py --all-regions \
-     -o ../audit-runs/<account_id>-<YYYYMMDD>/snapshot-retest-1.json
+     -o "$AUDIT_DIR/snapshot-retest-1.json"
    ```
    Retesting against the original snapshot only proves the data didn't
    change between two reads of the same file — it proves nothing about the
@@ -111,7 +111,7 @@ step updates which row.
 6. **Update the report and evidence package.** Rebuild the `.docx` report
    from the retest findings with `scripts/build_report.py`:
    ```bash
-   python3 scripts/build_report.py ../audit-runs/<account_id>-<YYYYMMDD>/findings-retest-1.json \
+   python3 scripts/build_report.py "$AUDIT_DIR/findings-retest-1.json" \
      --label retest-1
    ```
    It picks up `snapshot-retest-1.json` and `engagement-info.md` from the
@@ -239,6 +239,11 @@ work has stopped. Do this once, when the engagement is actually done:
    to circulate as if it were final, which is exactly what the cover banner,
    header, and filename are there to prevent.
 
+6. **Close out the engagement.** Write the manifest, move the engagement
+   into its private repository or an encrypted archive, test a restore, and
+   remove the local copies — `evidence-handling.md`, "Closing out an
+   engagement," with `scripts/archive_engagement.sh`.
+
 If something changes after finalization (a new finding surfaces, a prior
 fix regresses, an accepted exception needs revisiting), don't edit the
 `FINAL` report in place — that defeats the point of labeling it. Open a new
@@ -256,5 +261,5 @@ engagement cycle: a fresh retest, a new `DRAFT`, and its own path back to
   in step 4 above
 - `check-catalog.md` — the full check list, including which checks are
   framework-mapped vs. best-practice-only
-- `evidence-handling.md` — what happens to the `audit-runs/` directory
+- `evidence-handling.md` — what happens to the engagement directory
   (including retest artifacts) once an engagement is done

@@ -53,8 +53,7 @@
 #
 # Each run writes one admin-role-evidence-<mode>-<account>-<UTC timestamp>.json
 # with collected_at and caller_identity, and prints its SHA-256. Save both
-# files in the engagement's audit-runs/<account_id>-<YYYYMMDD>/evidence/
-# directory and cite them in the documentation request's section 3 Evidence
+# files in the engagement directory's evidence/ directory and cite them in the documentation request's section 3 Evidence
 # column - see references/accepting-findings-process.md.
 
 set -euo pipefail
