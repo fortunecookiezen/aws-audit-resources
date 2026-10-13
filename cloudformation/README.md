@@ -70,10 +70,11 @@ Important detail if you're testing from **CloudShell**: CloudShell itself needs 
 3. Assume the role, short-lived, for just this test:
    ```bash
    export AUDIT_ROLE_ARN="arn:aws:iam::<account-id>:role/<org_prefix>-CrossAccountSecurityAuditRole"
+   export AUDIT_SESSION_NAME="<auditor>-<YYYYMMDD>"   # e.g. jdoe-20261013; see ../skill/SKILL.md Step 2
    eval $(aws sts assume-role --role-arn $AUDIT_ROLE_ARN \
-     --role-session-name audit-test-session --duration-seconds 900 \
+     --role-session-name "$AUDIT_SESSION_NAME" --duration-seconds 900 \
      | jq -r '.Credentials | "export AWS_ACCESS_KEY_ID=\(.AccessKeyId)\nexport AWS_SECRET_ACCESS_KEY=\(.SecretAccessKey)\nexport AWS_SESSION_TOKEN=\(.SessionToken)\n"')
-   aws sts get-caller-identity   # confirm the Arn now shows assumed-role/<org_prefix>-CrossAccountSecurityAuditRole/audit-test-session
+   aws sts get-caller-identity   # confirm the Arn now shows assumed-role/<org_prefix>-CrossAccountSecurityAuditRole/<auditor>-<YYYYMMDD>
    ```
 4. Continue with `../skill/SKILL.md` Step 2.3 onward (install boto3, run the collector) using these temporary, scoped credentials rather than your original CloudShell identity — that's what actually exercises the role, not just your own admin access.
 

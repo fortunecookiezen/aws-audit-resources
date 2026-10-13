@@ -88,10 +88,13 @@ destroy_aws_role_profile() {
  done
 }
 
-# allows you to easily assume role and export credentials to the shell
+# allows you to easily assume role and export credentials to the shell.
+# The session name is $AUDIT_SESSION_NAME if set (<auditor>-<YYYYMMDD>), else
+# $USER-<YYYYMMDD>; in CloudShell $USER is always "cloudshell-user", so set
+# AUDIT_SESSION_NAME there to show in CloudTrail who made each call.
 assume_aws_role() {
     session=$(aws sts assume-role --role-arn ${1:?"role arn must be specified"} \
-    --role-session-name $USER --query "Credentials.[AccessKeyId, SecretAccessKey, SessionToken"] | jq -r ".[]")
+    --role-session-name "${AUDIT_SESSION_NAME:-${USER}-$(date -u +%Y%m%d)}" --query "Credentials.[AccessKeyId, SecretAccessKey, SessionToken"] | jq -r ".[]")
     keys=(${(f)session}) #creates an array from the javascript output
     access_key=$keys[1]
     secret_key=$keys[2]

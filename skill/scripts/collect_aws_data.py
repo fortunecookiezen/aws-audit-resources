@@ -22,7 +22,7 @@ Usage:
     # terraform/security-audit-role/ for how that role is deployed):
     python3 collect_aws_data.py --all-regions \\
         --role-arn arn:aws:iam::123456789012:role/opspath-CrossAccountSecurityAuditRole \\
-        --role-session-name audit-session \\
+        --role-session-name jdoe-20261013 \\
         -o snapshot.json
 
 Output schema (top level):
@@ -580,7 +580,9 @@ def main():
     parser = argparse.ArgumentParser(description="Collect AWS account data for the aws-audit skill.")
     parser.add_argument("--profile", help="named AWS CLI profile to use")
     parser.add_argument("--role-arn", help="assume this role before collecting (alternative to pre-exported credentials)")
-    parser.add_argument("--role-session-name", default="aws-audit-session", help="role session name used with --role-arn")
+    parser.add_argument("--role-session-name", default="aws-audit-session",
+                        help="role session name used with --role-arn; set it to <auditor>-<YYYYMMDD> so the "
+                             "snapshot's caller_arn and the audited account's CloudTrail show who collected")
     parser.add_argument("--regions", help="comma-separated list of regions (default: caller's configured region)")
     parser.add_argument("--all-regions", action="store_true", help="collect EC2/VPC data from every enabled region")
     parser.add_argument("-o", "--output", default="snapshot.json", help="output JSON file path")
