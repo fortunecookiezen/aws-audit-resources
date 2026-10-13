@@ -162,12 +162,23 @@ def parse_manual_checks(path=CHECK_CATALOG):
     return items
 
 
-def default_snapshot_path(findings_path):
+def default_snapshot_path(findings_path, collected_at):
+    """The snapshot these findings came from: snapshot-<label>.json for
+    findings-<label>.json, else snapshot.json. Either only counts if its
+    collected_at matches the findings', since a retest overwrites
+    snapshot.json while older findings files stay."""
     d, name = os.path.split(findings_path)
-    if "findings" not in name:
-        return None
-    candidate = os.path.join(d, name.replace("findings", "snapshot", 1))
-    return candidate if os.path.exists(candidate) else None
+    candidates = []
+    if "findings" in name:
+        candidates.append(os.path.join(d, name.replace("findings", "snapshot", 1)))
+    candidates.append(os.path.join(d, "snapshot.json"))
+    for candidate in candidates:
+        if not os.path.exists(candidate):
+            continue
+        with open(candidate) as f:
+            if json.load(f).get("collected_at") == collected_at:
+                return candidate
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -685,8 +696,14 @@ def build(args):
 
     meta, milestones = parse_engagement_info(args.engagement_info or os.path.join(engagement_dir, "engagement-info.md"))
 
-    snapshot_path = args.snapshot or default_snapshot_path(args.findings)
+    snapshot_path = args.snapshot or default_snapshot_path(args.findings, summary.get("collected_at"))
     snapshot = None
+    snapshot_warnings = []
+    if not snapshot_path:
+        snapshot_warnings.append(
+            "No snapshot matching these findings' collected_at was found next to them, so the appendix "
+            "omits who collected the data and which regions. Pass --snapshot."
+        )
     if snapshot_path:
         with open(snapshot_path) as f:
             snapshot = json.load(f)
@@ -722,7 +739,7 @@ def build(args):
     out_dir = args.out_dir or engagement_dir
     out_path = os.path.join(out_dir, output_filename(summary.get("account_id"), framework, args.label, ctx["status"]))
     doc.save(out_path)
-    return out_path, date_warnings(ctx) + finalization_warnings(ctx)
+    return out_path, snapshot_warnings + date_warnings(ctx) + finalization_warnings(ctx)
 
 
 def main():
