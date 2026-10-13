@@ -48,10 +48,13 @@ This repo's `cloudformation/security-audit-role.yml` (or the equivalent `terrafo
 2. **Assume the role** from a session already authenticated in the trusted/centralized account (matching the pattern in `scripts/README.md`):
    ```bash
    export AUDIT_ROLE_ARN="arn:aws:iam::<target-account-id>:role/<org_prefix>-CrossAccountSecurityAuditRole"
+   export AUDIT_SESSION_NAME="<auditor>-<YYYYMMDD>"   # e.g. jdoe-20261013 - see below
    eval $(aws sts assume-role --role-arn $AUDIT_ROLE_ARN \
-     --role-session-name audit-session | jq -r '.Credentials | "export AWS_ACCESS_KEY_ID=\(.AccessKeyId)\nexport AWS_SECRET_ACCESS_KEY=\(.SecretAccessKey)\nexport AWS_SESSION_TOKEN=\(.SessionToken)\n"')
+     --role-session-name "$AUDIT_SESSION_NAME" | jq -r '.Credentials | "export AWS_ACCESS_KEY_ID=\(.AccessKeyId)\nexport AWS_SECRET_ACCESS_KEY=\(.SecretAccessKey)\nexport AWS_SESSION_TOKEN=\(.SessionToken)\n"')
    ```
    Alternatively, pass `--role-arn` directly to `collect_aws_data.py` (see below) and let it assume the role itself via `boto3.client('sts').assume_role(...)` rather than exporting credentials into the shell.
+
+   Set the session name to who is collecting and when, not a generic name like `audit-session`. It becomes the last part of the session ARN, which `collect_aws_data.py` records as the snapshot's `caller_arn` and the report prints in its appendix as "Collected as:". It's also in every CloudTrail event the collector produces in the audited account, so the account owner can tie those API calls to a specific auditor and engagement. Use only letters, digits, underscores and `+=,.@-`, 2 to 64 characters. Record the role ARN and session name in the Test Start row of `engagement-info.md`'s Testing Narrative.
 
 3. **Run the collector, writing into the engagement directory created in Step 1:**
    ```bash
@@ -64,7 +67,7 @@ This repo's `cloudformation/security-audit-role.yml` (or the equivalent `terrafo
    pip install -r requirements.txt
    python3 scripts/collect_aws_data.py --all-regions -o ../audit-runs/<account_id>-<YYYYMMDD>/snapshot.json
    # or, to have the script assume the role itself instead of pre-exporting credentials:
-   python3 scripts/collect_aws_data.py --all-regions --role-arn $AUDIT_ROLE_ARN -o ../audit-runs/<account_id>-<YYYYMMDD>/snapshot.json
+   python3 scripts/collect_aws_data.py --all-regions --role-arn $AUDIT_ROLE_ARN --role-session-name "$AUDIT_SESSION_NAME" -o ../audit-runs/<account_id>-<YYYYMMDD>/snapshot.json
    ```
 
 ### B. Exported files
