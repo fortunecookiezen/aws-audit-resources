@@ -18,6 +18,10 @@ check was incomplete (an API call it depends on failed during collection;
 see the retest's summary.checks_incomplete) or skipped, the finding is
 listed as not verified instead: the resource may still exist, uncollected.
 
+It also prints the tool version each side was produced with, and a NOTE when
+they differ: then a change between the two can come from the tool (a check
+or collector fix) rather than from the account.
+
 Exit status is 2 if any finding regressed (was passing/accepted, now
 failing), so this can gate a CI/automation step; 0 otherwise.
 """
@@ -79,6 +83,14 @@ def diff(baseline, retest):
     }
 
 
+def _versions(summary):
+    """The tool version(s) behind one findings file: "collected with X,
+    checked with Y" collapsed to one value when they match."""
+    checks = summary.get("tool_version") or "not recorded"
+    collected = summary.get("snapshot_tool_version") or "not recorded"
+    return checks if checks == collected else f"collected {collected}, checked {checks}"
+
+
 def _fmt(f):
     return f"{f['check_id']} — {f['resource']} [{f['status']}]"
 
@@ -86,8 +98,15 @@ def _fmt(f):
 def print_report(baseline, retest, d):
     bf = baseline["summary"].get("framework")
     rf = retest["summary"].get("framework")
-    print(f"Baseline: {baseline['summary'].get('collected_at')} ({bf}, {len(baseline['findings'])} findings)")
-    print(f"Retest:   {retest['summary'].get('collected_at')} ({rf}, {len(retest['findings'])} findings)")
+    bv, rv = _versions(baseline["summary"]), _versions(retest["summary"])
+    print(f"Baseline: {baseline['summary'].get('collected_at')} ({bf}, {len(baseline['findings'])} findings; tool {bv})")
+    print(f"Retest:   {retest['summary'].get('collected_at')} ({rf}, {len(retest['findings'])} findings; tool {rv})")
+    if bv != rv:
+        print(
+            f"NOTE: the baseline and retest were produced with different tool versions ({bv} vs {rv}), "
+            "so a change below can come from the tool rather than the account. Check the release notes "
+            "between them for check, collector or exceptions changes."
+        )
     if bf != rf:
         print(
             f"WARNING: baseline framework ({bf}) != retest framework ({rf}) - "

@@ -32,7 +32,9 @@ checklist says must be settled first (open "fail" findings, "Pending"
 Testing Narrative rows, blank auditor fields). It still builds, so the
 warnings can be reviewed against the output, but a FINAL with warnings
 isn't ready to deliver. Any build also warns about a Testing Narrative date
-that isn't YYYY-MM-DD, since dates are printed exactly as written.
+that isn't YYYY-MM-DD, since dates are printed exactly as written, and about
+the tool versions behind the report: collection, checks or the report build
+not run from a release tag, or run from different versions.
 """
 
 import argparse
@@ -53,6 +55,8 @@ except ImportError:
     print("python-docx is required: activate a venv and run pip install -r requirements.txt (from the skill/ directory)", file=sys.stderr)
     sys.exit(1)
 
+
+from tool_version import tool_version, version_problem
 
 SKILL_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CHECK_CATALOG = os.path.join(SKILL_DIR, "references", "check-catalog.md")
@@ -535,6 +539,12 @@ def build_appendix(doc, ctx):
     if snap.get("regions"):
         add_bullet(doc, ", ".join(snap["regions"]), bold_prefix="Regions: ")
     add_bullet(doc, os.path.basename(ctx["findings_path"]), bold_prefix="Findings file: ")
+    versions = tool_versions(ctx)
+    if len(set(versions.values())) == 1:
+        add_bullet(doc, f"{versions['collection']} (collection, checks and report)", bold_prefix="Tool version: ")
+    else:
+        for stage, version in versions.items():
+            add_bullet(doc, version, bold_prefix=f"Tool version ({stage}): ")
 
     doc.add_heading("Controls evaluated", level=2)
     titles = {f["check_id"]: f["title"] for f in ctx["findings"]}
@@ -647,6 +657,35 @@ def setup_document(ctx):
     return doc
 
 
+def tool_versions(ctx):
+    """The tool version behind each stage of this report, "not recorded" for
+    files produced before the tool recorded it."""
+    s, snap = ctx["summary"], ctx["snapshot"] or {}
+    return {
+        "collection": s.get("snapshot_tool_version") or snap.get("tool_version") or "not recorded",
+        "checks": s.get("tool_version") or "not recorded",
+        "report": ctx["report_tool_version"],
+    }
+
+
+def tool_version_warnings(ctx):
+    """A report should come from one released version of the tool, end to end."""
+    versions = tool_versions(ctx)
+    warnings = []
+    for stage, version in versions.items():
+        problem = version_problem(None if version == "not recorded" else version)
+        if problem:
+            warnings.append(f"{stage.capitalize()}: {problem}.")
+    recorded = {k: v for k, v in versions.items() if v != "not recorded"}
+    if len(set(recorded.values())) > 1:
+        warnings.append(
+            "Collection, checks and report were produced with different tool versions ("
+            + ", ".join(f"{k} {v}" for k, v in recorded.items())
+            + "). Rerun the checks and the report build from the version that collected the snapshot."
+        )
+    return warnings
+
+
 def date_warnings(ctx):
     """Testing Narrative dates are printed exactly as written, so flag any
     that aren't YYYY-MM-DD (engagement-info-template.md)."""
@@ -739,6 +778,7 @@ def build(args):
         "data_source": args.data_source,
         "findings_path": args.findings,
         "manual_checks": parse_manual_checks(),
+        "report_tool_version": tool_version(),
     }
 
     doc = setup_document(ctx)
@@ -756,7 +796,7 @@ def build(args):
     out_dir = args.out_dir or engagement_dir
     out_path = os.path.join(out_dir, output_filename(summary.get("account_id"), framework, args.label, ctx["status"]))
     doc.save(out_path)
-    return out_path, snapshot_warnings + date_warnings(ctx) + finalization_warnings(ctx)
+    return out_path, snapshot_warnings + date_warnings(ctx) + tool_version_warnings(ctx) + finalization_warnings(ctx)
 
 
 def main():

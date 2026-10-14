@@ -27,8 +27,10 @@ export AUDIT_DIR=~/audits/<client>/<account_id>-<YYYYMMDD>
 mkdir -p "$AUDIT_DIR/evidence"
 cp references/engagement-info-template.md "$AUDIT_DIR/engagement-info.md"
 git -C "$AUDIT_DIR" init   # only if the evidence will live in a private engagement repository
-git -C .. describe --always --dirty   # the tool version; note it in the Testing Narrative for each run
+git -C .. describe --tags --always --dirty   # should print the release tag you checked out, e.g. v0.1.0
 ```
+
+The collector, `run_checks.py` and `build_report.py` record this tool version in the snapshot, the findings and the report appendix, and warn when it isn't an exact release tag (commits past a tag, `-dirty`, or `unknown` outside a git checkout) or differs between stages. Audit from a release checkout so those warnings don't appear.
 
 If this account's expected exceptions aren't already known (centrally-managed root credentials, named admin roles, other pre-reviewed risks), send the account/engagement owner `references/documentation-request-template.md` now rather than waiting to correct false positives after the report is built — see `references/accepting-findings-process.md`. When it comes back, save it in the engagement directory as `documentation-request-response.md` (or the signed PDF, `documentation-request-response.pdf`), and put its attachments — `list-organizations-features` output, console screenshots, tickets — under `evidence/` there. Then transcribe it into `exceptions.json` in the same directory, section by section, using the mapping in `references/exceptions-and-exclusions.md` ("From the documentation request"). `exceptions.json` is optional: if there are no exceptions, don't create it, and leave `--exceptions` off in Step 3.
 

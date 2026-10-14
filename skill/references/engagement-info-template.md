@@ -53,10 +53,10 @@ before filling the file in.*
 warns about any date in another format. Leave `Date` blank for a milestone that hasn't
 happened yet - the report shows it as "Pending" rather than inventing a
 date. Add a row only if you need an extra milestone beyond the five below;
-don't remove any of the five, even if blank. In Notes for Test Start and
-each retest, record the tool version the scripts ran from (`git describe
---always --dirty` in the tool checkout): findings depend on the code as well
-as the account.*
+don't remove any of the five, even if blank. The tool version each run used
+is recorded automatically in its snapshot, findings and report appendix;
+note it here only when it changes between runs, since findings depend on the
+code as well as the account.*
 
 | Milestone | Date (YYYY-MM-DD) | By | Notes |
 |---|---|---|---|
