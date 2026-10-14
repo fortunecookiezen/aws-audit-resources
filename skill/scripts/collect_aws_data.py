@@ -28,6 +28,7 @@ Usage:
 Output schema (top level):
     {
       "collected_at": "<ISO8601 UTC timestamp>",
+      "tool_version": "<git describe of the tool checkout, e.g. v0.1.0>",
       "account_id": "<12-digit account id, from sts:GetCallerIdentity>",
       "caller_arn": "<arn of the identity that ran the collection>",
       "regions": ["us-east-1", ...],
@@ -71,6 +72,8 @@ import re
 import sys
 import time
 from datetime import datetime, timezone
+
+from tool_version import tool_version, version_problem
 
 try:
     import boto3
@@ -681,6 +684,12 @@ def main():
     parser.add_argument("-o", "--output", default="snapshot.json", help="output JSON file path")
     args = parser.parse_args()
 
+    version = tool_version()
+    print(f"Tool version: {version}", file=sys.stderr)
+    problem = version_problem(version)
+    if problem:
+        print(f"WARNING: {problem}. Audit from a release checkout (git checkout vX.Y.Z).", file=sys.stderr)
+
     session = get_session(args)
     account_id, caller_arn = get_caller_identity(session)
     print(f"Collecting data for account {account_id} as {caller_arn}", file=sys.stderr)
@@ -690,6 +699,7 @@ def main():
 
     snapshot = {
         "collected_at": utcnow_iso(),
+        "tool_version": version,
         "account_id": account_id,
         "caller_arn": caller_arn,
         "regions": regions,

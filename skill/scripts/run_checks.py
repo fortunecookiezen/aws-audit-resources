@@ -60,6 +60,8 @@ import re
 import sys
 from datetime import datetime, timezone
 
+from tool_version import tool_version, version_problem
+
 
 ADMIN_PORTS = [(22, 22), (3389, 3389)]
 
@@ -1458,6 +1460,11 @@ def run(snapshot, framework, exceptions=None, base_dir=None):
     summary = {
         "account_id": snapshot.get("account_id"),
         "collected_at": snapshot.get("collected_at"),
+        # The code that evaluated these findings, and the code that collected
+        # the snapshot they came from (None for a snapshot from before the
+        # collector recorded it).
+        "tool_version": tool_version(),
+        "snapshot_tool_version": snapshot.get("tool_version"),
         "framework": framework,
         "total_findings": len(findings),
         "failed": len(failed),
@@ -1484,6 +1491,22 @@ def run(snapshot, framework, exceptions=None, base_dir=None):
     }
 
     return {"summary": summary, "findings": findings}
+
+
+def version_warnings(summary):
+    """Warnings about the code that produced these findings: not a release,
+    or different code for collection and checks."""
+    checks, collected = summary.get("tool_version"), summary.get("snapshot_tool_version")
+    warnings = []
+    problem = version_problem(checks)
+    if problem:
+        warnings.append(f"Checks: {problem}.")
+    problem = version_problem(collected)
+    if problem:
+        warnings.append(f"Snapshot: {problem}.")
+    if checks and collected and checks != collected:
+        warnings.append(f"The snapshot was collected with tool version {collected} but checked with {checks}.")
+    return warnings
 
 
 def main():
@@ -1522,6 +1545,8 @@ def main():
               "so a failed API call can't be told from an empty result. Collect again to rule that out.",
               file=sys.stderr)
     for w in result["summary"]["exceptions_warnings"]:
+        print(f"WARNING: {w}", file=sys.stderr)
+    for w in version_warnings(result["summary"]):
         print(f"WARNING: {w}", file=sys.stderr)
 
 

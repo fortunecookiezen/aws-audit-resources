@@ -18,7 +18,7 @@ This repository is public and holds only tooling. Audit evidence never goes in i
 - **AWS CLI** v2, and credentials that can assume the audit role in the target account (typically through IAM Identity Center)
 - **Python 3.10 or newer**, in a virtual environment, with `skill/requirements.txt` installed (boto3, python-docx). On macOS, `/usr/bin/python3` is Apple's 3.9; use Homebrew's Python (see `skill/SKILL.md`, Step 2).
 - **jq** - used by the evidence scripts and the role-assumption commands
-- **git** - to check out a release and record the tool version for each run
+- **git** - to check out a release; the scripts record its version in each snapshot, findings file and report
 - **age** or **gpg** - only to close out an engagement into an encrypted archive (`brew install age`, or an existing GPG key)
 - **Optional:** Microsoft Word or LibreOffice, to read and check the generated report (building it doesn't need either)
 - **Optional:** [Claude Code](https://claude.com/claude-code), to run the audit as a Claude skill
@@ -35,7 +35,7 @@ Deploy [`cloudformation/security-audit-role.yml`](cloudformation/README.md) or t
 git clone https://github.com/fortunecookiezen/aws-audit-resources.git
 cd aws-audit-resources
 git checkout v0.1.0              # the release you'll audit with
-git describe --always --dirty    # record this in the engagement's Testing Narrative
+git describe --tags --always --dirty    # should print v0.1.0; the scripts record it in every run
 ```
 
 Use this checkout only to run audits. Findings depend on the code as well as the account, so audit from a release, and develop the tool in a separate clone (see [Developing the tool](#developing-the-tool)).
@@ -114,7 +114,7 @@ Audits run from a release tag, and each engagement records the tag it used. Afte
 ./tag_release.sh 0.1.0    # creates and pushes v0.1.0
 ```
 
-The script refuses to run with uncommitted or untracked files, or if the tag already exists, and tags the newest commit on `origin/main`. Bump the minor version for any change that can change a finding (checks, the collector, the exceptions logic), the major version for a change to the snapshot or findings file formats, and the patch version for documentation and report-layout changes.
+The script refuses to run with uncommitted or untracked files, or if the tag already exists, and tags the newest commit on `origin/main`. Bump the minor version for any change that can change a finding (checks, the collector, the exceptions logic) and for fields added to the snapshot or findings files, the major version for a change that makes earlier snapshot or findings files unreadable or changes what an existing field means, and the patch version for documentation and report-layout changes.
 
 ## Security scanning
 

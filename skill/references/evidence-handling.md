@@ -8,13 +8,7 @@ This doc is the intended lifecycle for a single audit engagement, start to finis
 
 Keep the tool and the engagement apart:
 
-- **The tool checkout** is a clone of this repo, used read-only to run audits. Check it out at a release tag, or a commit you can name, and don't develop in it: changing the tool happens in a different clone, through pull requests. Findings depend on the code that produced them (a collector fix can turn a failure into a pass without anything changing in the account), so record the tool commit each time you collect or run checks — the Testing Narrative's Notes column is the place:
-
-  ```bash
-  git -C <tool checkout> describe --always --dirty
-  ```
-
-  A `-dirty` result means the checkout has uncommitted changes, so the commit alone doesn't describe the code that ran. Don't audit from it.
+- **The tool checkout** is a clone of this repo, used read-only to run audits. Check it out at a release tag, or a commit you can name, and don't develop in it: changing the tool happens in a different clone, through pull requests. Findings depend on the code that produced them (a collector fix can turn a failure into a pass without anything changing in the account), so the scripts record which code ran: `collect_aws_data.py` writes `tool_version` (`git describe --tags --always --dirty` of the checkout) into the snapshot, `run_checks.py` writes `tool_version` and `snapshot_tool_version` into the findings summary, and `build_report.py` prints them in the report appendix. Each warns when a version isn't an exact release tag: `v0.1.0-3-gabc1234` is three commits past a release, `-dirty` means uncommitted changes (the code that ran isn't recorded anywhere), and `unknown` means the scripts weren't run from a git checkout. The report also warns when collection, checks and the report build used different versions, and `diff_findings.py` notes when a baseline and retest did, since a change between them can then come from the tool. Don't audit from a checkout that produces these warnings.
 
 - **The engagement directory** holds everything about one engagement, and lives *outside* the tool checkout, for example:
 
@@ -81,7 +75,7 @@ A private engagement repository must be private and must not be a fork of this r
    bash scripts/archive_engagement.sh "$AUDIT_DIR" --age-recipient <age public key> --out-dir <dir>
    ```
 
-   The script refuses an engagement whose `engagement-info.md` doesn't say `Report Status: FINAL` or that has no `*_FINAL.docx` (pass `--allow-draft` for an engagement that was abandoned rather than finished). It writes `MANIFEST.sha256` (the SHA-256 of every file, checkable with `shasum -a 256 -c MANIFEST.sha256`) and `ARCHIVE-INFO.txt` (when, by whom, and with which tool commit it was archived) into the engagement directory. For a disk archive it then builds `aws-audit-<account_id>-<YYYYMMDD>.tar.gz`, extracts it into a scratch directory to check it matches the manifest, encrypts it, deletes the plaintext, and writes the encrypted file's SHA-256 beside it. Word lock files (`~$*`), `.DS_Store` and AppleDouble (`._*`) files are left out. The archive is encrypted because its contents describe where the account is weak; `--no-encrypt` exists only for storage that is already encrypted and access-controlled.
+   The script refuses an engagement whose `engagement-info.md` doesn't say `Report Status: FINAL` or that has no `*_FINAL.docx` (pass `--allow-draft` for an engagement that was abandoned rather than finished). It writes `MANIFEST.sha256` (the SHA-256 of every file, checkable with `shasum -a 256 -c MANIFEST.sha256`) and `ARCHIVE-INFO.txt` (when, by whom, and with which tool commit it was archived, and every tool version recorded in its snapshots and findings) into the engagement directory. For a disk archive it then builds `aws-audit-<account_id>-<YYYYMMDD>.tar.gz`, extracts it into a scratch directory to check it matches the manifest, encrypts it, deletes the plaintext, and writes the encrypted file's SHA-256 beside it. Word lock files (`~$*`), `.DS_Store` and AppleDouble (`._*`) files are left out. The archive is encrypted because its contents describe where the account is weak; `--no-encrypt` exists only for storage that is already encrypted and access-controlled.
 
 3. **Store it and test a restore.** Copy the encrypted archive and its `.sha256` to the evidence store your retention policy uses (encrypted cloud storage, a secure file share), and keep a second copy of the `.sha256` somewhere other than next to the archive. Then restore it from the store with the private key and check the manifest:
 

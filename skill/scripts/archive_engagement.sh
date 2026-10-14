@@ -20,7 +20,8 @@
 #
 # Every run writes two files into the engagement directory:
 #   ARCHIVE-INFO.txt   when and by whom it was archived, the tool commit it
-#                      was archived with, and the file count
+#                      was archived with, the tool versions recorded in its
+#                      snapshots and findings, and the file count
 #   MANIFEST.sha256    SHA-256 of every file (except .git/ and editor/OS
 #                      debris), checkable with `shasum -a 256 -c MANIFEST.sha256`
 # --manifest-only stops there, for an engagement kept in a private git
@@ -110,7 +111,7 @@ debris="$(cd "$dir" && find . -type f \( -name '~$*' -o -name '.DS_Store' -o -na
 [ -z "$debris" ] || { echo "Leaving out of the manifest and archive:" >&2; echo "$debris" | sed 's/^/  /' >&2; }
 
 script_dir="$(cd "$(dirname "$0")" && pwd)"
-tool_commit="$(git -C "$script_dir" describe --always --dirty --abbrev=12 2>/dev/null || echo unknown)"
+tool_commit="$(git -C "$script_dir" describe --tags --always --dirty --abbrev=12 2>/dev/null || echo unknown)"
 archived_by="$(git config user.name 2>/dev/null || true)"
 archived_by="${archived_by:-${USER:-unknown}}"
 
@@ -120,6 +121,11 @@ archived_by="${archived_by:-${USER:-unknown}}"
   echo "archived_by: $archived_by"
   echo "report_status: ${status:-<blank>}"
   echo "tool_commit_at_archive: $tool_commit"
+  # Every tool version recorded in the engagement's snapshots and findings.
+  used="$(cd "$dir" && find . -name '*.json' ! -path './.git/*' ! -path './evidence/*' -type f -print0 \
+    | xargs -0 grep -ho '"\(snapshot_\)\{0,1\}tool_version": *"[^"]*"' 2>/dev/null \
+    | sed 's/.*: *"\(.*\)"/\1/' | LC_ALL=C sort -u | paste -sd ' ' - || true)"
+  echo "tool_versions_used: ${used:-none recorded}"
   echo "files: $(list_files | grep -vcx 'ARCHIVE-INFO.txt' || true) (plus this file and MANIFEST.sha256)"
 } > "$dir/ARCHIVE-INFO.txt"
 
