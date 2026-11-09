@@ -16,7 +16,7 @@ Usage:
     python3 run_checks.py snapshot.json --framework cis --exceptions exceptions.json -o findings.json
 
 Reads the JSON produced by collect_aws_data.py (or an equivalent hand-built file
-matching its schema) and runs the 27 checks documented in
+matching its schema) and runs the 49 checks documented in
 references/check-catalog.md. Any check whose required snapshot data is missing
 is marked "skipped" rather than guessed at or silently dropped. A check that
 ran, but on data where one of the API calls it depends on failed during
@@ -24,13 +24,15 @@ collection (the snapshot's collection_errors), is listed in the summary's
 checks_incomplete: its results cover only what was collected, and a resource
 the failed call would have returned is missing rather than passing.
 
-One of those 27 (default_vpc_exists) is best-practice-only: no CIS AWS
+One of those (default_vpc_exists) is best-practice-only: no CIS AWS
 Foundations Benchmark, SOC 2, or ISO 27001 control actually requires deleting
 a region's default VPC, so its "refs" for those three frameworks are an
 informational note rather than a control ID - see check-catalog.md's footnote
 and references/remediation-and-retesting.md's "Findings outside the audited
 framework's scope." It still runs and reports under every framework; it just
-doesn't masquerade as satisfying a control that doesn't exist.
+doesn't masquerade as satisfying a control that doesn't exist. Several of the
+detection, database, encryption and container checks have no CIS control
+either, and carry the same kind of note (_NOT_CIS) for CIS only.
 
 Findings carry one of three statuses: "pass", "fail", or "accepted" - the last
 one only ever produced when an --exceptions file explicitly matches a finding
@@ -52,6 +54,7 @@ back with no explanation.
 
 import argparse
 import copy
+import fnmatch
 import hashlib
 import inspect
 import json
@@ -64,6 +67,11 @@ from tool_version import tool_version, version_problem
 
 
 ADMIN_PORTS = [(22, 22), (3389, 3389)]
+
+# refs value for a check with no CIS AWS Foundations Benchmark control: it
+# still reports under --framework cis, stating the absence plainly (as
+# default_vpc_exists does) rather than citing a control that doesn't exist.
+_NOT_CIS = "Not in CIS v7.0.0 scope (AWS best practice)"
 
 
 # ---------------------------------------------------------------------------
@@ -271,6 +279,168 @@ CHECKS_META = {
             "soc2": "Not a TSC control (AWS best practice)",
             "iso27001": "Not a specific Annex A control (AWS best practice)",
         },
+    },
+
+    # --- Detection & Monitoring ---------------------------------------------
+    "guardduty_enabled": {
+        "title": "GuardDuty is enabled in every collected region",
+        "area": "Detection & Monitoring",
+        "severity": "High",
+        "remediation": "aws guardduty create-detector --enable --region <region> (or enable it organization-wide from the GuardDuty delegated administrator).",
+        "refs": {"cis": _NOT_CIS, "well_architected": "SEC04-BP03", "soc2": "CC7.2", "iso27001": "A.8.16"},
+    },
+    "securityhub_enabled": {
+        "title": "Security Hub is enabled in every collected region",
+        "area": "Detection & Monitoring",
+        "severity": "Medium",
+        "remediation": "aws securityhub enable-security-hub --enable-default-standards --region <region> (or from the Security Hub delegated administrator with central configuration).",
+        "refs": {"cis": "5.16", "well_architected": "SEC04-BP02", "soc2": "CC7.2, CC7.3", "iso27001": "A.8.16"},
+    },
+    "inspector_enabled": {
+        "title": "Inspector scans EC2, ECR and Lambda in every collected region",
+        "area": "Detection & Monitoring",
+        "severity": "Medium",
+        "remediation": "aws inspector2 enable --resource-types EC2 ECR LAMBDA --region <region> (or from the Inspector delegated administrator).",
+        "refs": {"cis": _NOT_CIS, "well_architected": "SEC06-BP01", "soc2": "CC7.1", "iso27001": "A.8.8"},
+    },
+    "access_analyzer_enabled": {
+        "title": "IAM Access Analyzer (external access) is active in every collected region",
+        "area": "Detection & Monitoring",
+        "severity": "Medium",
+        "remediation": "aws accessanalyzer create-analyzer --analyzer-name <name> --type ACCOUNT --region <region> (an ORGANIZATION analyzer in the management or delegated administrator account also covers this account; record it under accepted_findings with that evidence).",
+        "refs": {"cis": "2.20", "well_architected": "SEC03-BP07", "soc2": "CC6.1, CC6.3", "iso27001": "A.5.15"},
+    },
+    "config_recorder_enabled": {
+        "title": "AWS Config records all supported resource types in every collected region",
+        "area": "Detection & Monitoring",
+        "severity": "Medium",
+        "remediation": "Create a configuration recorder with allSupported=true (includeGlobalResourceTypes=true in one region), a delivery channel, and start it: aws configservice put-configuration-recorder / put-delivery-channel / start-configuration-recorder. The repo's cloudformation/EnableAWSConfig.yml does this.",
+        "refs": {"cis": "4.3", "well_architected": "SEC04-BP01", "soc2": "CC7.1, CC8.1", "iso27001": "A.8.9"},
+    },
+    "cloudwatch_log_group_retention": {
+        "title": "CloudWatch log groups keep logs for at least 365 days",
+        "area": "Detection & Monitoring",
+        "severity": "Low",
+        "remediation": "aws logs put-retention-policy --log-group-name <name> --retention-in-days 365 (or longer, or export to S3 with a lifecycle policy that meets the retention requirement).",
+        "refs": {"cis": _NOT_CIS, "well_architected": "SEC04-BP02", "soc2": "CC7.2", "iso27001": "A.8.15"},
+    },
+
+    # --- Databases ----------------------------------------------------------
+    "rds_instance_not_public": {
+        "title": "RDS instances are not publicly accessible",
+        "area": "Databases",
+        "severity": "High",
+        "remediation": "aws rds modify-db-instance --db-instance-identifier <id> --no-publicly-accessible --apply-immediately, and keep the instance in private subnets.",
+        "refs": {"cis": "3.3.3", "well_architected": "SEC05-BP01", "soc2": "CC6.1, CC6.6", "iso27001": "A.8.20"},
+    },
+    "rds_storage_encrypted": {
+        "title": "RDS instances and clusters are encrypted at rest",
+        "area": "Databases",
+        "severity": "High",
+        "remediation": "Encryption can't be turned on in place: snapshot the database, copy the snapshot with --kms-key-id, restore from the encrypted copy, and cut over.",
+        "refs": {"cis": "3.3.1", "well_architected": "SEC08-BP02", "soc2": "CC6.1", "iso27001": "A.8.24"},
+    },
+    "rds_backup_retention_7d": {
+        "title": "RDS automated backups are kept for at least 7 days",
+        "area": "Databases",
+        "severity": "Medium",
+        "remediation": "aws rds modify-db-instance (or modify-db-cluster) --backup-retention-period 7 (or what the backup policy requires).",
+        "refs": {"cis": _NOT_CIS, "well_architected": "REL09-BP03 (Reliability pillar)", "soc2": "CC7.5, CC9.1", "iso27001": "A.8.13"},
+    },
+    "rds_deletion_protection": {
+        "title": "RDS instances and clusters have deletion protection on",
+        "area": "Databases",
+        "severity": "Low",
+        "remediation": "aws rds modify-db-instance (or modify-db-cluster) --deletion-protection.",
+        "refs": {"cis": _NOT_CIS, "well_architected": "REL09-BP01 (Reliability pillar)", "soc2": "CC7.5, CC9.1", "iso27001": "A.8.13"},
+    },
+    "rds_snapshot_not_public": {
+        "title": "RDS manual snapshots are not shared publicly",
+        "area": "Databases",
+        "severity": "Critical",
+        "remediation": "aws rds modify-db-snapshot-attribute (or modify-db-cluster-snapshot-attribute) --attribute-name restore --values-to-remove all.",
+        "refs": {"cis": _NOT_CIS, "well_architected": "SEC03-BP07", "soc2": "CC6.1, CC6.6, CC6.7", "iso27001": "A.8.3, A.8.12"},
+    },
+    "dynamodb_pitr_enabled": {
+        "title": "DynamoDB tables have point-in-time recovery on",
+        "area": "Databases",
+        "severity": "Medium",
+        "remediation": "aws dynamodb update-continuous-backups --table-name <name> --point-in-time-recovery-specification PointInTimeRecoveryEnabled=true",
+        "refs": {"cis": _NOT_CIS, "well_architected": "REL09-BP03 (Reliability pillar)", "soc2": "CC7.5, CC9.1", "iso27001": "A.8.13"},
+    },
+    "elasticache_encryption_at_rest": {
+        "title": "ElastiCache clusters are encrypted at rest",
+        "area": "Databases",
+        "severity": "Medium",
+        "remediation": "At-rest encryption is set at creation: create a new replication group with --at-rest-encryption-enabled from a backup, then cut over.",
+        "refs": {"cis": _NOT_CIS, "well_architected": "SEC08-BP02", "soc2": "CC6.1", "iso27001": "A.8.24"},
+    },
+    "elasticache_encryption_in_transit": {
+        "title": "ElastiCache clusters encrypt data in transit",
+        "area": "Databases",
+        "severity": "Medium",
+        "remediation": "aws elasticache modify-replication-group --transit-encryption-enabled --transit-encryption-mode preferred, move clients to TLS, then set the mode to required.",
+        "refs": {"cis": _NOT_CIS, "well_architected": "SEC09-BP02", "soc2": "CC6.7", "iso27001": "A.8.24"},
+    },
+
+    # --- Encryption & Secrets -----------------------------------------------
+    "kms_cmk_rotation_enabled": {
+        "title": "Customer-managed KMS keys have automatic rotation on",
+        "area": "Encryption & Secrets",
+        "severity": "Medium",
+        "remediation": "aws kms enable-key-rotation --key-id <key-id> (symmetric keys with AWS-generated key material only).",
+        "refs": {"cis": "4.6", "well_architected": "SEC08-BP01", "soc2": "CC6.1", "iso27001": "A.8.24"},
+    },
+    "secrets_rotation_enabled": {
+        "title": "Secrets Manager secrets have automatic rotation on",
+        "area": "Encryption & Secrets",
+        "severity": "Medium",
+        "remediation": "aws secretsmanager rotate-secret --secret-id <id> --rotation-lambda-arn <arn> --rotation-rules AutomaticallyAfterDays=90 (or managed rotation for RDS/Redshift/DocumentDB credentials). Secrets that can't rotate automatically need a documented manual rotation, recorded under accepted_findings.",
+        "refs": {"cis": _NOT_CIS, "well_architected": "SEC02-BP03", "soc2": "CC6.1", "iso27001": "A.5.17"},
+    },
+    "resource_policy_no_public_principal": {
+        "title": "KMS key, secret, ECR repository and SNS topic policies don't allow Principal \"*\"",
+        "area": "Encryption & Secrets",
+        "severity": "High",
+        "remediation": "Replace Principal \"*\" with the specific account or role ARNs, or add a condition that scopes it (aws:PrincipalOrgID, aws:SourceAccount, aws:SourceArn, aws:SourceVpce).",
+        "refs": {"cis": "2.21", "well_architected": "SEC03-BP07", "soc2": "CC6.1, CC6.3, CC6.6", "iso27001": "A.5.15, A.8.3"},
+    },
+    "ebs_default_encryption": {
+        "title": "EBS encryption by default is on in every collected region",
+        "area": "Encryption & Secrets",
+        "severity": "Medium",
+        "remediation": "aws ec2 enable-ebs-encryption-by-default --region <region>",
+        "refs": {"cis": "3.2.1", "well_architected": "SEC08-BP02", "soc2": "CC6.1", "iso27001": "A.8.24"},
+    },
+    "ebs_volume_encrypted": {
+        "title": "EBS volumes are encrypted",
+        "area": "Encryption & Secrets",
+        "severity": "Medium",
+        "remediation": "Snapshot the volume, copy the snapshot with --encrypted, create a volume from the copy, and swap it in (stop the instance for a root volume).",
+        "refs": {"cis": _NOT_CIS, "well_architected": "SEC08-BP02", "soc2": "CC6.1", "iso27001": "A.8.24"},
+    },
+    "ebs_snapshot_not_public": {
+        "title": "No EBS snapshot is publicly restorable",
+        "area": "Encryption & Secrets",
+        "severity": "Critical",
+        "remediation": "aws ec2 modify-snapshot-attribute --snapshot-id <id> --attribute createVolumePermission --operation-type remove --group-names all; then aws ec2 enable-snapshot-block-public-access --state block-all-sharing.",
+        "refs": {"cis": _NOT_CIS, "well_architected": "SEC03-BP07", "soc2": "CC6.1, CC6.6, CC6.7", "iso27001": "A.8.3, A.8.12"},
+    },
+
+    # --- Containers ---------------------------------------------------------
+    "ecr_image_scanning": {
+        "title": "ECR repositories are scanned for vulnerabilities",
+        "area": "Containers",
+        "severity": "Medium",
+        "remediation": "Turn on Inspector enhanced scanning for ECR (aws inspector2 enable --resource-types ECR), or set a registry scanning rule: aws ecr put-registry-scanning-configuration --scan-type ENHANCED --rules '[{\"scanFrequency\":\"CONTINUOUS_SCAN\",\"repositoryFilters\":[{\"filter\":\"*\",\"filterType\":\"WILDCARD\"}]}]'.",
+        "refs": {"cis": _NOT_CIS, "well_architected": "SEC06-BP01", "soc2": "CC7.1", "iso27001": "A.8.8"},
+    },
+    "ecr_tag_immutability": {
+        "title": "ECR repositories have immutable image tags",
+        "area": "Containers",
+        "severity": "Low",
+        "remediation": "aws ecr put-image-tag-mutability --repository-name <name> --image-tag-mutability IMMUTABLE (deploy by digest or unique tags, not :latest).",
+        "refs": {"cis": _NOT_CIS, "well_architected": "SEC11-BP06", "soc2": "CC8.1", "iso27001": "A.8.32"},
     },
 }
 
@@ -1278,6 +1448,392 @@ def check_default_vpc_exists(snap):
     } for v in vpcs]
 
 
+# ---------------------------------------------------------------------------
+# Detection & Monitoring. Each regional section lists one entry per region
+# whose calls succeeded; a region whose call failed is absent (and in
+# collection_errors, which marks the check incomplete), never passed.
+# ---------------------------------------------------------------------------
+
+def _regions(snap, section):
+    data = snap.get(section)
+    if data is None:
+        return None
+    return data.get("regions") or []
+
+
+def check_guardduty_enabled(snap):
+    regions = _regions(snap, "guardduty")
+    if regions is None:
+        return None
+    results = []
+    for r in regions:
+        statuses = [d.get("status") for d in r.get("detectors", [])]
+        results.append({
+            "resource": r["region"],
+            "status": "pass" if "ENABLED" in statuses else "fail",
+            "evidence": f"detector statuses={statuses}" if statuses else "No GuardDuty detector in this region.",
+        })
+    return results
+
+
+def check_securityhub_enabled(snap):
+    regions = _regions(snap, "securityhub")
+    if regions is None:
+        return None
+    results = []
+    for r in regions:
+        if not r.get("enabled"):
+            results.append({"resource": r["region"], "status": "fail",
+                            "evidence": "Security Hub is not enabled in this region."})
+            continue
+        standards = [f"{(s.get('arn') or '').split('/', 1)[-1]} ({s.get('status')})" for s in r.get("standards", [])]
+        results.append({"resource": r["region"], "status": "pass",
+                        "evidence": f"Enabled; standards: {', '.join(standards) or 'none'}."})
+    return results
+
+
+def check_inspector_enabled(snap):
+    regions = _regions(snap, "inspector")
+    if regions is None:
+        return None
+    results = []
+    for r in regions:
+        states = {t: r.get(t) for t in ("ec2", "ecr", "lambda")}
+        off = [t for t, s in states.items() if s != "ENABLED"]
+        results.append({
+            "resource": r["region"],
+            "status": "fail" if off else "pass",
+            "evidence": ", ".join(f"{t}={s}" for t, s in states.items())
+                        + (f"; not scanning: {', '.join(off)}." if off else "."),
+        })
+    return results
+
+
+def check_access_analyzer_enabled(snap):
+    regions = _regions(snap, "access_analyzer")
+    if regions is None:
+        return None
+    results = []
+    for r in regions:
+        active = [a for a in r.get("analyzers", [])
+                  if a.get("type") in ("ACCOUNT", "ORGANIZATION") and a.get("status") == "ACTIVE"]
+        results.append({
+            "resource": r["region"],
+            "status": "pass" if active else "fail",
+            "evidence": (f"Active external-access analyzer(s): {', '.join(a['name'] + ' (' + a['type'] + ')' for a in active)}."
+                         if active else
+                         f"No active ACCOUNT or ORGANIZATION analyzer in this region "
+                         f"({len(r.get('analyzers', []))} analyzer(s) of other types or states)."),
+        })
+    return results
+
+
+def check_config_recorder_enabled(snap):
+    regions = _regions(snap, "config")
+    if regions is None:
+        return None
+    results = []
+    for r in regions:
+        recorders = r.get("recorders", [])
+        good = [x for x in recorders if x.get("recording") and x.get("all_supported")]
+        if good:
+            status, evidence = "pass", (f"Recorder {good[0]['name']} is recording all supported types "
+                                        f"(include_global_resource_types={good[0].get('include_global_resource_types')}, "
+                                        f"last_status={good[0].get('last_status')}).")
+        elif recorders:
+            x = recorders[0]
+            status, evidence = "fail", (f"Recorder {x.get('name')}: recording={x.get('recording')}, "
+                                        f"all_supported={x.get('all_supported')}, "
+                                        f"recording_strategy={x.get('recording_strategy')}.")
+        else:
+            status, evidence = "fail", "No configuration recorder in this region."
+        results.append({"resource": r["region"], "status": status, "evidence": evidence})
+    return results
+
+
+LOG_RETENTION_MIN_DAYS = 365
+
+
+def check_cloudwatch_log_group_retention(snap):
+    groups = (snap.get("logs") or {}).get("log_groups") if "logs" in snap else None
+    if groups is None:
+        return None
+    results = []
+    for g in groups:
+        days = g.get("retention_in_days")
+        ok = days is None or days >= LOG_RETENTION_MIN_DAYS
+        results.append({
+            "resource": f"{g['name']} ({g['region']})",
+            "status": "pass" if ok else "fail",
+            "evidence": "retention=never expire" if days is None else f"retention_in_days={days}",
+        })
+    return results
+
+
+# ---------------------------------------------------------------------------
+# Databases
+# ---------------------------------------------------------------------------
+
+def _rds_databases(rds):
+    """Standalone instances plus clusters. An instance in a cluster (Aurora,
+    Multi-AZ DB cluster) takes its storage, backup and deletion settings from
+    the cluster, so the cluster is evaluated instead of each member."""
+    out = [("instance", i) for i in rds.get("instances", []) if not i.get("cluster_id")]
+    out += [("cluster", c) for c in rds.get("clusters", [])]
+    return out
+
+
+def check_rds_instance_not_public(snap):
+    rds = snap.get("rds")
+    if rds is None:
+        return None
+    return [{
+        "resource": f"{i['id']} ({i['region']})",
+        "status": "fail" if i.get("publicly_accessible") else "pass",
+        "evidence": f"engine={i.get('engine')}, publicly_accessible={i.get('publicly_accessible')}",
+    } for i in rds.get("instances", [])]
+
+
+def check_rds_storage_encrypted(snap):
+    rds = snap.get("rds")
+    if rds is None:
+        return None
+    return [{
+        "resource": f"{kind}:{d['id']} ({d['region']})",
+        "status": "pass" if d.get("storage_encrypted") else "fail",
+        "evidence": f"engine={d.get('engine')}, storage_encrypted={d.get('storage_encrypted')}",
+    } for kind, d in _rds_databases(rds)]
+
+
+RDS_MIN_BACKUP_DAYS = 7
+
+
+def check_rds_backup_retention_7d(snap):
+    rds = snap.get("rds")
+    if rds is None:
+        return None
+    return [{
+        "resource": f"{kind}:{d['id']} ({d['region']})",
+        "status": "pass" if (d.get("backup_retention_period") or 0) >= RDS_MIN_BACKUP_DAYS else "fail",
+        "evidence": f"backup_retention_period={d.get('backup_retention_period')} days"
+                    + (" (automated backups off)" if not d.get("backup_retention_period") else ""),
+    } for kind, d in _rds_databases(rds)]
+
+
+def check_rds_deletion_protection(snap):
+    rds = snap.get("rds")
+    if rds is None:
+        return None
+    return [{
+        "resource": f"{kind}:{d['id']} ({d['region']})",
+        "status": "pass" if d.get("deletion_protection") else "fail",
+        "evidence": f"deletion_protection={d.get('deletion_protection')}",
+    } for kind, d in _rds_databases(rds)]
+
+
+def check_rds_snapshot_not_public(snap):
+    rds = snap.get("rds")
+    if rds is None:
+        return None
+    return [{
+        "resource": f"{s['kind']}-snapshot:{s['id']} ({s['region']})",
+        "status": "fail" if s.get("public") else "pass",
+        "evidence": f"restore attribute includes 'all'={s.get('public')}, encrypted={s.get('encrypted')}",
+    } for s in _readable(rds.get("snapshots", []), "public")]
+
+
+def check_dynamodb_pitr_enabled(snap):
+    tables = (snap.get("dynamodb") or {}).get("tables") if "dynamodb" in snap else None
+    if tables is None:
+        return None
+    return [{
+        "resource": f"{t['name']} ({t['region']})",
+        "status": "pass" if t.get("pitr_status") == "ENABLED" else "fail",
+        "evidence": f"point_in_time_recovery={t.get('pitr_status')}",
+    } for t in _readable(tables, "pitr_status")]
+
+
+def _elasticache_all(ec):
+    return ([("replication-group", g) for g in ec.get("replication_groups", [])]
+            + [("cluster", c) for c in ec.get("clusters", [])])
+
+
+def check_elasticache_encryption_at_rest(snap):
+    ec = snap.get("elasticache")
+    if ec is None:
+        return None
+    results = []
+    for kind, c in _elasticache_all(ec):
+        evidence = f"engine={c.get('engine')}, at_rest_encryption={c.get('at_rest_encryption')}"
+        if not c.get("at_rest_encryption") and c.get("engine") == "memcached":
+            evidence += " (self-designed Memcached clusters don't support at-rest encryption; ElastiCache Serverless does)"
+        results.append({"resource": f"{kind}:{c['id']} ({c['region']})",
+                        "status": "pass" if c.get("at_rest_encryption") else "fail", "evidence": evidence})
+    return results
+
+
+def check_elasticache_encryption_in_transit(snap):
+    ec = snap.get("elasticache")
+    if ec is None:
+        return None
+    results = []
+    for kind, c in _elasticache_all(ec):
+        mode = c.get("transit_encryption_mode")
+        # "preferred" accepts plaintext connections too: a migration state, not the goal.
+        ok = c.get("transit_encryption") and mode in (None, "required")
+        results.append({
+            "resource": f"{kind}:{c['id']} ({c['region']})",
+            "status": "pass" if ok else "fail",
+            "evidence": f"transit_encryption={c.get('transit_encryption')}, mode={mode}, auth_token_enabled={c.get('auth_token_enabled')}",
+        })
+    return results
+
+
+# ---------------------------------------------------------------------------
+# Encryption & Secrets
+# ---------------------------------------------------------------------------
+
+def _kms_label(k):
+    alias = next(iter(k.get("aliases") or []), None)
+    return f"{alias or k['key_id']} ({k['region']})"
+
+
+def check_kms_cmk_rotation_enabled(snap):
+    keys = (snap.get("kms") or {}).get("keys") if "kms" in snap else None
+    if keys is None:
+        return None
+    return [{
+        "resource": _kms_label(k),
+        "status": "pass" if k.get("rotation_enabled") else "fail",
+        "evidence": f"key_id={k['key_id']}, rotation_enabled={k.get('rotation_enabled')}"
+                    + (f", rotation_period_days={k['rotation_period_days']}" if k.get("rotation_period_days") else ""),
+    } for k in _readable(keys, "rotation_enabled") if k.get("rotation_supported")]
+
+
+def check_secrets_rotation_enabled(snap):
+    """Secrets owned by another service (an RDS-managed master password, an
+    EventBridge connection) are rotated, or not, by that service, so they're
+    left out rather than failed for something the customer can't set."""
+    secrets = (snap.get("secretsmanager") or {}).get("secrets") if "secretsmanager" in snap else None
+    if secrets is None:
+        return None
+    return [{
+        "resource": f"{s['name']} ({s['region']})",
+        "status": "pass" if s.get("rotation_enabled") else "fail",
+        "evidence": f"rotation_enabled={s.get('rotation_enabled')}, last_rotated={s.get('last_rotated')}, "
+                    f"last_changed={s.get('last_changed')}",
+    } for s in secrets if not s.get("owning_service")]
+
+
+def check_resource_policy_no_public_principal(snap):
+    sources = (
+        ("kms", "keys", lambda k: f"kms:{_kms_label(k)}"),
+        ("secretsmanager", "secrets", lambda s: f"secret:{s['name']} ({s['region']})"),
+        ("ecr", "repositories", lambda r: f"ecr:{r['name']} ({r['region']})"),
+        ("sns", "topics", lambda t: f"sns:{t['name']} ({t['region']})"),
+    )
+    if not any(section in snap for section, _, _ in sources):
+        return None
+    results = []
+    for section, key, label in sources:
+        for item in _readable((snap.get(section) or {}).get(key) or [], "public_policy"):
+            if item.get("public_policy") is None:
+                continue
+            results.append({
+                "resource": label(item),
+                "status": "fail" if item["public_policy"] else "pass",
+                "evidence": ("Policy has an Allow statement for Principal \"*\" with no condition limiting it "
+                             "to specific accounts, organizations, sources or networks."
+                             if item["public_policy"] else "No unrestricted Principal \"*\" Allow statement."),
+            })
+    return results
+
+
+def check_ebs_default_encryption(snap):
+    regions = _regions(snap, "ebs")
+    if regions is None:
+        return None
+    return [{
+        "resource": r["region"],
+        "status": "pass" if r.get("encryption_by_default") else "fail",
+        "evidence": f"ebs_encryption_by_default={r.get('encryption_by_default')}",
+    } for r in _readable(regions, "encryption_by_default")]
+
+
+def check_ebs_volume_encrypted(snap):
+    vols = (snap.get("ebs") or {}).get("volumes") if "ebs" in snap else None
+    if vols is None:
+        return None
+    return [{
+        "resource": f"{v['volume_id']} ({v['region']})",
+        "status": "pass" if v.get("encrypted") else "fail",
+        "evidence": f"encrypted={v.get('encrypted')}, state={v.get('state')}, attached_to={v.get('attached_to') or 'none'}",
+    } for v in vols]
+
+
+def check_ebs_snapshot_not_public(snap):
+    regions = _regions(snap, "ebs")
+    if regions is None:
+        return None
+    results = []
+    for r in _readable(regions, "public_snapshot_ids"):
+        bpa = r.get("snapshot_block_public_access")
+        public = r.get("public_snapshot_ids") or []
+        for sid in public:
+            results.append({"resource": f"{sid} ({r['region']})", "status": "fail",
+                            "evidence": f"Restorable by all AWS accounts; snapshot_block_public_access={bpa}."})
+        if not public:
+            results.append({"resource": r["region"], "status": "pass",
+                            "evidence": f"No publicly restorable snapshots; snapshot_block_public_access={bpa}."})
+    return results
+
+
+# ---------------------------------------------------------------------------
+# Containers
+# ---------------------------------------------------------------------------
+
+def _ecr_rule_covers(registry, repo_name):
+    """The registry scanning rule (enhanced or basic) whose wildcard filter
+    matches this repository, or None."""
+    for rule in (registry or {}).get("rules", []):
+        if rule.get("scan_frequency") not in ("SCAN_ON_PUSH", "CONTINUOUS_SCAN"):
+            continue
+        if any(fnmatch.fnmatchcase(repo_name, f) for f in rule.get("filters", []) if f):
+            return rule
+    return None
+
+
+def check_ecr_image_scanning(snap):
+    ecr = snap.get("ecr")
+    if ecr is None:
+        return None
+    registries = {r["region"]: r for r in ecr.get("registries", [])}
+    results = []
+    for repo in ecr.get("repositories", []):
+        reg = registries.get(repo["region"])
+        rule = _ecr_rule_covers(reg, repo["name"])
+        if rule:
+            evidence = f"Registry {reg.get('scan_type')} scanning rule {rule['scan_frequency']} matches (filters={rule['filters']})."
+        elif repo.get("scan_on_push"):
+            evidence = "Repository scan_on_push=true (basic scanning)."
+        else:
+            evidence = f"No registry scanning rule matches and scan_on_push=false (registry scan_type={(reg or {}).get('scan_type')})."
+        results.append({"resource": f"{repo['name']} ({repo['region']})",
+                         "status": "pass" if rule or repo.get("scan_on_push") else "fail", "evidence": evidence})
+    return results
+
+
+def check_ecr_tag_immutability(snap):
+    ecr = snap.get("ecr")
+    if ecr is None:
+        return None
+    return [{
+        "resource": f"{r['name']} ({r['region']})",
+        "status": "pass" if (r.get("tag_mutability") or "").startswith("IMMUTABLE") else "fail",
+        "evidence": f"image_tag_mutability={r.get('tag_mutability')}",
+    } for r in ecr.get("repositories", [])]
+
+
 CHECK_FUNCS = {
     "root_mfa_enabled": check_root_mfa_enabled,
     "root_hardware_mfa": check_root_hardware_mfa,
@@ -1306,6 +1862,28 @@ CHECK_FUNCS = {
     "sg_default_restricts_traffic": check_sg_default_restricts_traffic,
     "ec2_imdsv2_required": check_ec2_imdsv2_required,
     "default_vpc_exists": check_default_vpc_exists,
+    "guardduty_enabled": check_guardduty_enabled,
+    "securityhub_enabled": check_securityhub_enabled,
+    "inspector_enabled": check_inspector_enabled,
+    "access_analyzer_enabled": check_access_analyzer_enabled,
+    "config_recorder_enabled": check_config_recorder_enabled,
+    "cloudwatch_log_group_retention": check_cloudwatch_log_group_retention,
+    "rds_instance_not_public": check_rds_instance_not_public,
+    "rds_storage_encrypted": check_rds_storage_encrypted,
+    "rds_backup_retention_7d": check_rds_backup_retention_7d,
+    "rds_deletion_protection": check_rds_deletion_protection,
+    "rds_snapshot_not_public": check_rds_snapshot_not_public,
+    "dynamodb_pitr_enabled": check_dynamodb_pitr_enabled,
+    "elasticache_encryption_at_rest": check_elasticache_encryption_at_rest,
+    "elasticache_encryption_in_transit": check_elasticache_encryption_in_transit,
+    "kms_cmk_rotation_enabled": check_kms_cmk_rotation_enabled,
+    "secrets_rotation_enabled": check_secrets_rotation_enabled,
+    "resource_policy_no_public_principal": check_resource_policy_no_public_principal,
+    "ebs_default_encryption": check_ebs_default_encryption,
+    "ebs_volume_encrypted": check_ebs_volume_encrypted,
+    "ebs_snapshot_not_public": check_ebs_snapshot_not_public,
+    "ecr_image_scanning": check_ecr_image_scanning,
+    "ecr_tag_immutability": check_ecr_tag_immutability,
 }
 
 
@@ -1320,6 +1898,8 @@ _ADMIN_POLICY = {"list_policies", "get_policy_version", "list_entities_for_polic
                  "list_user_policies", "list_role_policies", "list_group_policies",
                  "get_user_policy", "get_role_policy", "get_group_policy"}
 _TRAILS = {"describe_trails", "get_trail_status", "get_event_selectors"}
+_RDS_DATABASES = {"describe_db_instances", "describe_db_clusters"}
+_ELASTICACHE = {"describe_replication_groups", "describe_cache_clusters"}
 CHECK_OPERATIONS = {
     "root_mfa_enabled": _ROOT,
     "root_hardware_mfa": _ROOT,
@@ -1349,6 +1929,32 @@ CHECK_OPERATIONS = {
     "sg_default_restricts_traffic": {"describe_security_groups"},
     "ec2_imdsv2_required": {"describe_instances"},
     "default_vpc_exists": {"describe_vpcs"},
+    "guardduty_enabled": {"list_detectors", "get_detector"},
+    "securityhub_enabled": {"describe_hub", "get_enabled_standards"},
+    "inspector_enabled": {"batch_get_account_status"},
+    "access_analyzer_enabled": {"list_analyzers"},
+    "config_recorder_enabled": {"describe_configuration_recorders", "describe_configuration_recorder_status"},
+    "cloudwatch_log_group_retention": {"describe_log_groups"},
+    "rds_instance_not_public": {"describe_db_instances"},
+    "rds_storage_encrypted": _RDS_DATABASES,
+    "rds_backup_retention_7d": _RDS_DATABASES,
+    "rds_deletion_protection": _RDS_DATABASES,
+    "rds_snapshot_not_public": {"describe_db_snapshots", "describe_db_cluster_snapshots",
+                                "describe_db_snapshot_attributes", "describe_db_cluster_snapshot_attributes"},
+    "dynamodb_pitr_enabled": {"list_tables", "describe_continuous_backups"},
+    "elasticache_encryption_at_rest": _ELASTICACHE,
+    "elasticache_encryption_in_transit": _ELASTICACHE,
+    "kms_cmk_rotation_enabled": {"list_keys", "describe_key", "get_key_rotation_status"},
+    "secrets_rotation_enabled": {"list_secrets"},
+    "resource_policy_no_public_principal": {"list_keys", "describe_key", "get_key_policy",
+                                            "list_secrets", "get_resource_policy",
+                                            "describe_repositories", "get_repository_policy",
+                                            "list_topics", "get_topic_attributes"},
+    "ebs_default_encryption": {"get_ebs_encryption_by_default"},
+    "ebs_volume_encrypted": {"describe_volumes"},
+    "ebs_snapshot_not_public": {"describe_snapshots"},
+    "ecr_image_scanning": {"describe_repositories", "get_registry_scanning_configuration"},
+    "ecr_tag_immutability": {"describe_repositories"},
 }
 
 
@@ -1356,13 +1962,30 @@ CHECK_OPERATIONS = {
 # different checks from different sections (get_bucket_logging for this
 # account's buckets in "s3", for a trail's bucket in "cloudtrail"), so a
 # failed call only affects the checks that read the section it failed in.
-CHECK_SECTIONS = {check_id: {"iam", "organization"} if check_id.startswith("root_") else
-                  {"iam", "organization"} if check_id == "iam_credentials_unused_45d" else
-                  {"account_contacts"} if check_id.startswith("account_") else
-                  {"iam"} if check_id.startswith("iam_") else
-                  {"s3"} if check_id.startswith("s3_") else
-                  {"cloudtrail"} if check_id.startswith("cloudtrail_") else
-                  {"ec2"}
+# Matched on check_id prefix, first match wins; anything unmatched reads "ec2".
+_SECTION_BY_PREFIX = (
+    ("root_", {"iam", "organization"}),
+    ("iam_credentials_unused_45d", {"iam", "organization"}),
+    ("account_", {"account_contacts"}),
+    ("iam_", {"iam"}),
+    ("s3_", {"s3"}),
+    ("cloudtrail_", {"cloudtrail"}),
+    ("guardduty_", {"guardduty"}),
+    ("securityhub_", {"securityhub"}),
+    ("inspector_", {"inspector"}),
+    ("access_analyzer_", {"access_analyzer"}),
+    ("config_", {"config"}),
+    ("cloudwatch_log_", {"logs"}),
+    ("rds_", {"rds"}),
+    ("dynamodb_", {"dynamodb"}),
+    ("elasticache_", {"elasticache"}),
+    ("kms_", {"kms"}),
+    ("secrets_", {"secretsmanager"}),
+    ("resource_policy_", {"kms", "secretsmanager", "ecr", "sns"}),
+    ("ebs_", {"ebs"}),
+    ("ecr_", {"ecr"}),
+)
+CHECK_SECTIONS = {check_id: next((s for p, s in _SECTION_BY_PREFIX if check_id.startswith(p)), {"ec2"})
                   for check_id in CHECK_OPERATIONS}
 
 

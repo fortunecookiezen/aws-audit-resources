@@ -46,6 +46,23 @@
         {"text": "Report cites SOC 2 Common Criteria IDs (e.g. CC6.1, CC6.2, CC6.3, CC6.6) next to the IAM/MFA findings it does make"},
         {"text": "Output is delivered as a .docx file"}
       ]
+    },
+    {
+      "id": 3,
+      "prompt": "We're preparing for a SOC 2 Type II audit. Here's a full snapshot of our AWS account 111122223333 from your collector, including the newer service sections: fixtures/soc2-extended-snapshot.json. Give me the Word report, and make sure it covers our databases, keys and secrets, and whether our detection services are on everywhere.",
+      "files": ["fixtures/soc2-extended-snapshot.json"],
+      "expected_output": "A .docx SOC 2 report covering all ten areas, with the core-area findings from the base sample plus Detection & Monitoring, Databases, Encryption & Secrets and Containers findings: the publicly shared RDS snapshot and EBS snapshot as critical, the public unencrypted RDS instance and the KMS key and ECR repository with Principal \"*\" policies as high, and us-west-2 lacking GuardDuty, Security Hub, Access Analyzer and AWS Config.",
+      "expectations": [
+        {"text": "Report identifies the RDS snapshot acme-orders-db-pre-migration as publicly shared, rated Critical"},
+        {"text": "Report identifies EBS snapshot snap-0acmepublic1 as publicly restorable, rated Critical"},
+        {"text": "Report identifies RDS instance acme-orders-db as publicly accessible and unencrypted, and does not fail the encrypted Aurora cluster acme-billing"},
+        {"text": "Report identifies the KMS key alias/acme-legacy and the ECR repository acme/worker as having resource policies that allow Principal \"*\""},
+        {"text": "Report identifies us-west-2 as lacking GuardDuty, Security Hub, IAM Access Analyzer and AWS Config recording, while us-east-1 passes those checks"},
+        {"text": "Report identifies DynamoDB table acme-sessions as lacking point-in-time recovery and ElastiCache replication group acme-cache as unencrypted at rest and in transit"},
+        {"text": "Report does not fail the RDS-managed secret rds!cluster-acme-billing for rotation, and does fail acme/orders/db"},
+        {"text": "Report cites SOC 2 Common Criteria IDs for the new areas (e.g. CC7.2 for GuardDuty, CC6.1 for encryption, CC7.5/CC9.1 for backups)"},
+        {"text": "Output is delivered as a .docx file"}
+      ]
     }
   ]
 }

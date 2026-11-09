@@ -31,8 +31,30 @@ Master list of the automated checks this skill runs. Each row maps one `check_id
 | `sg_default_restricts_traffic` | SG/VPC | Low | 6.5 | SEC05-BP01 | CC6.1 | A.8.20 |
 | `ec2_imdsv2_required` | SG/VPC | Medium | 6.7 | SEC05-BP02 | CC6.1 | A.8.20 |
 | `default_vpc_exists`² | SG/VPC | Low | — | SEC05-BP01 | — | — |
+| `guardduty_enabled`⁶ | Detection | High | — | SEC04-BP03 | CC7.2 | A.8.16 |
+| `securityhub_enabled`⁶ | Detection | Medium | 5.16⁵ | SEC04-BP02 | CC7.2, CC7.3 | A.8.16 |
+| `inspector_enabled`⁶ | Detection | Medium | — | SEC06-BP01 | CC7.1 | A.8.8 |
+| `access_analyzer_enabled`⁶ | Detection | Medium | 2.20⁵ | SEC03-BP07 | CC6.1, CC6.3 | A.5.15 |
+| `config_recorder_enabled`⁶ | Detection | Medium | 4.3⁵ | SEC04-BP01 | CC7.1, CC8.1 | A.8.9 |
+| `cloudwatch_log_group_retention` | Detection | Low | — | SEC04-BP02 | CC7.2 | A.8.15 |
+| `rds_instance_not_public` | Databases | High | 3.3.3⁵ | SEC05-BP01 | CC6.1, CC6.6 | A.8.20 |
+| `rds_storage_encrypted`⁷ | Databases | High | 3.3.1⁵ | SEC08-BP02 | CC6.1 | A.8.24 |
+| `rds_backup_retention_7d`⁷ | Databases | Medium | — | REL09-BP03⁸ | CC7.5, CC9.1 | A.8.13 |
+| `rds_deletion_protection`⁷ | Databases | Low | — | REL09-BP01⁸ | CC7.5, CC9.1 | A.8.13 |
+| `rds_snapshot_not_public` | Databases | Critical | — | SEC03-BP07 | CC6.1, CC6.6, CC6.7 | A.8.3, A.8.12 |
+| `dynamodb_pitr_enabled` | Databases | Medium | — | REL09-BP03⁸ | CC7.5, CC9.1 | A.8.13 |
+| `elasticache_encryption_at_rest` | Databases | Medium | — | SEC08-BP02 | CC6.1 | A.8.24 |
+| `elasticache_encryption_in_transit` | Databases | Medium | — | SEC09-BP02 | CC6.7 | A.8.24 |
+| `kms_cmk_rotation_enabled` | Encryption | Medium | 4.6⁵ | SEC08-BP01 | CC6.1 | A.8.24 |
+| `secrets_rotation_enabled`⁹ | Encryption | Medium | — | SEC02-BP03 | CC6.1 | A.5.17 |
+| `resource_policy_no_public_principal`¹⁰ | Encryption | High | 2.21 | SEC03-BP07 | CC6.1, CC6.3, CC6.6 | A.5.15, A.8.3 |
+| `ebs_default_encryption`⁶ | Encryption | Medium | 3.2.1⁵ | SEC08-BP02 | CC6.1 | A.8.24 |
+| `ebs_volume_encrypted` | Encryption | Medium | — | SEC08-BP02 | CC6.1 | A.8.24 |
+| `ebs_snapshot_not_public` | Encryption | Critical | — | SEC03-BP07 | CC6.1, CC6.6, CC6.7 | A.8.3, A.8.12 |
+| `ecr_image_scanning` | Containers | Medium | — | SEC06-BP01 | CC7.1 | A.8.8 |
+| `ecr_tag_immutability` | Containers | Low | — | SEC11-BP06 | CC8.1 | A.8.32 |
 
-27 checks total, all within the six core areas (IAM, MFA, S3, CloudTrail/logging, Security Groups/VPC, root account).
+49 checks total: 27 in the six core areas (IAM, MFA, S3, CloudTrail/logging, Security Groups/VPC, root account) and 22 in four further areas — Detection & Monitoring (GuardDuty, Security Hub, Inspector, IAM Access Analyzer, AWS Config, CloudWatch Logs), Databases (RDS, DynamoDB, ElastiCache), Encryption & Secrets (KMS, Secrets Manager, EBS, plus SNS and ECR resource policies) and Containers (ECR). A `—` in the CIS column of the new rows means the control isn't in CIS AWS Foundations; the check reports under `--framework cis` with that stated, the same way `default_vpc_exists` does.
 
 ¹ Supports `--exceptions` — can resolve to `"pass"` (root checks, including `iam_credentials_unused_45d` for the root row only, via AWS Organizations centralized root access management) or `"accepted"` (`iam_no_full_admin_policy`, via a named admin-principal match) instead of `"fail"`. Any other check can also resolve to `"accepted"` through an `accepted_findings` rule for a specific resource; the checks marked ¹ can't, because they have these stricter paths instead. A root-management claim is only applied when it's corroborated by the actual collected data (no login profile, no access keys, no MFA device) — see `references/exceptions-and-exclusions.md`.
 
@@ -42,12 +64,24 @@ Master list of the automated checks this skill runs. Each row maps one `check_id
 
 ⁴ An organization trail's bucket is usually in another account (the management or log archive account), where the audit role's `s3:GetBucketLogging` is denied unless that bucket's policy allows it. The collector then records the call in `collection_errors` and leaves the trail's logging as unknown, so the check has no result for it and is marked incomplete; it isn't failed for logging the role couldn't read. To evaluate it, either have the bucket's owner allow the audit role `s3:GetBucketLogging` on the bucket, or collect the setting as evidence in the account that owns it and record it under `verified_values` in the exceptions file (see `exceptions-and-exclusions.md`).
 
+⁵ CIS IDs for these controls follow the v3.0 → v7.0.0 renumbering visible in `cis-aws-foundations.md` (v3.0 1.20 → 2.20, 2.2.1 → 3.2.1, 2.3.1 → 3.3.1, 2.3.3 → 3.3.3, 3.3 → 4.3, 3.6 → 4.6, 4.16 → 5.16). Confirm them against the v7.0.0 benchmark document before citing them in a final report; `cis-aws-foundations.md` doesn't describe them yet.
+
+⁶ Evaluated per collected region: each region is its own result, so an audit run with `--all-regions` reports every enabled region that lacks the service (CIS 4.3 and 2.20 ask for every region). Organization-wide GuardDuty, Security Hub, Inspector and Config still turn the service on in each member account and region, so a missing region is a real gap wherever the audit runs. Two cases to record under `accepted_findings`, with evidence: regions the client blocks with an SCP, and Access Analyzer when an ORGANIZATION analyzer in the management or delegated administrator account covers this account (that analyzer doesn't appear in the member account).
+
+⁷ An instance that belongs to a cluster (Aurora, Multi-AZ DB cluster) takes its storage encryption, backup retention and deletion protection from the cluster, so the cluster is evaluated and its member instances aren't. `rds_instance_not_public` is evaluated per instance, since public accessibility is set per instance.
+
+⁸ Backups and deletion protection are in the Well-Architected Reliability pillar, not the Security pillar this skill's Well-Architected framework covers; the ID is given so the finding still has a reference.
+
+⁹ Secrets owned by another service (`OwningService` set — an RDS-managed master password, an EventBridge API destination connection) are left out: that service controls their rotation, so the customer can't turn it on. A secret that can't rotate automatically (a third-party API key) is a real finding; resolve it with a documented manual rotation process recorded under `accepted_findings`.
+
+¹⁰ Covers KMS customer-managed key policies, Secrets Manager resource policies, ECR repository policies and SNS topic policies. A statement is public when it allows `Principal: "*"` (or `{"AWS": "*"}`, or uses `NotPrincipal`) and no condition key narrows it to specific accounts, organizations, sources or networks (`aws:PrincipalOrgID`, `aws:PrincipalAccount`, `aws:SourceAccount`, `aws:SourceArn`, `aws:SourceVpce`, `aws:SourceIp`, `kms:CallerAccount` and similar). The collector records only that answer, not the policy document. SQS queue, Lambda function and S3 bucket policies aren't covered yet (S3 public access is `s3_block_public_access`).
+
 ## Manual/extended checks (not automated in v1)
 
-These controls appear in the frameworks above but are not evaluated by `run_checks.py` in this version — they require either a human judgment call, infrastructure outside the six core areas, or data this skill's collector does not gather. List them in the report's "Scope & Methodology" appendix as out-of-scope rather than silently omitting them.
+These controls appear in the frameworks above but are not evaluated by `run_checks.py` in this version — they require either a human judgment call, infrastructure outside the areas above, or data this skill's collector does not gather. List them in the report's "Scope & Methodology" appendix as out-of-scope rather than silently omitting them.
 
 - **CIS 2.2** — Maintain current AWS account contact details (needs human judgment on "current/correct", not just "populated")
-- **CIS 2.21** — Resource policies don't allow unrestricted access via `Principal: *` (spans services outside the six core areas: SQS, SNS, Lambda, KMS, Secrets Manager)
+- **CIS 2.21 (remainder)** — Resource policies don't allow unrestricted access via `Principal: *`: `resource_policy_no_public_principal` covers KMS, Secrets Manager, ECR and SNS; SQS queue and Lambda function policies still need a manual review
 - **CIS 5.2, 5.3, 5.5, 5.10** — CloudWatch metric-filter/alarm monitoring controls (require chained metric filter → alarm → confirmed SNS subscription checks; deferred to a future version)
 - **CIS 6.6** — VPC peering route table least-access (inherently architectural/judgment-based)
 - **CIS 6.8** — VPC Endpoints used for AWS service access (architectural; no automated Prowler-equivalent check exists yet either)

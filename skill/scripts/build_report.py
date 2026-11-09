@@ -56,6 +56,7 @@ except ImportError:
     sys.exit(1)
 
 
+from run_checks import CHECKS_META
 from tool_version import tool_version, version_problem
 
 SKILL_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -69,11 +70,13 @@ FRAMEWORK_NAMES = {
     "all": "All supported frameworks (CIS, Well-Architected, SOC 2, ISO 27001)",
 }
 FRAMEWORK_SHORT = {"cis": "CIS", "well_architected": "Well-Architected", "soc2": "SOC 2", "iso27001": "ISO 27001"}
-AREA_ORDER = ["IAM", "MFA", "S3", "CloudTrail / Logging", "Security Groups / VPC", "Root Account"]
+AREA_ORDER = ["IAM", "MFA", "S3", "CloudTrail / Logging", "Security Groups / VPC", "Root Account",
+              "Detection & Monitoring", "Databases", "Encryption & Secrets", "Containers"]
 SEVERITY_ORDER = ["Critical", "High", "Medium", "Low"]
 OUT_OF_SCOPE = (
-    "RDS, EFS, EBS, KMS (general), AWS Config, AWS Organizations governance, "
-    "Security Hub / GuardDuty enablement, and other services outside the six core areas."
+    "Load balancers, CloudFront, API Gateway, WAF, ACM, Lambda, Cognito, ECS/EKS workloads, "
+    "Elastic Beanstalk, CI/CD services (CodeBuild, CodePipeline, CodeCommit), Systems Manager, "
+    "CloudFormation, EFS, CloudWatch metric-filter alarms, and AWS Organizations governance."
 )
 
 METADATA_KEYS = [
@@ -308,6 +311,27 @@ def severity_key(sev):
     return SEVERITY_ORDER.index(sev) if sev in SEVERITY_ORDER else len(SEVERITY_ORDER)
 
 
+def area_check_counts(ctx):
+    """{area: (checks evaluated, checks skipped for missing data)} for every area, in report order."""
+    s = ctx["summary"]
+    check_area = {c: m["area"] for c, m in CHECKS_META.items()}
+    check_area.update({f["check_id"]: f["area"] for f in ctx["findings"]})
+    extra = sorted({f["area"] for f in ctx["findings"]} - set(AREA_ORDER))
+    counts = {area: [0, 0] for area in AREA_ORDER + extra}
+    for i, key in enumerate(("checks_evaluated", "checks_skipped")):
+        for c in s.get(key) or []:
+            if check_area.get(c) in counts:
+                counts[check_area[c]][i] += 1
+    return {area: tuple(n) for area, n in counts.items()}
+
+
+def split_areas(ctx):
+    """(areas with at least one evaluated check, areas with none)."""
+    counts = area_check_counts(ctx)
+    evaluated = [a for a, (n_eval, _) in counts.items() if n_eval]
+    return evaluated, [a for a in counts if a not in evaluated]
+
+
 def group_by_check(findings):
     """{check_id: [findings]} preserving first-seen order."""
     grouped = {}
@@ -397,10 +421,24 @@ def build_executive_summary(doc, ctx):
         )
     else:
         posture = "No critical or high-severity findings were identified; the remaining findings are medium or low severity."
+    evaluated_areas, unevaluated_areas = split_areas(ctx)
+    total = len(evaluated_areas) + len(unevaluated_areas)
+    if not unevaluated_areas:
+        coverage = f"across {total} areas: {', '.join(evaluated_areas)}."
+    elif not evaluated_areas:
+        coverage = (f"but none of the {total} areas could be evaluated, because the snapshot lacked the "
+                    "data their checks need.")
+    else:
+        coverage = (
+            f"across {len(evaluated_areas)} of {total} areas ({', '.join(evaluated_areas)}). "
+            f"{len(unevaluated_areas)} area(s) could not be evaluated because the snapshot lacked the data "
+            f"their checks need, and have no results in this report: {', '.join(unevaluated_areas)}."
+        )
+    collected = (f"Data was collected {ctx['collected_at']}." if ctx["collected_known"]
+                 else "The snapshot does not record when its data was collected.")
     doc.add_paragraph(
         f"This report covers AWS account {s.get('account_id') or 'Unknown'}, evaluated against the "
-        f"{FRAMEWORK_NAMES.get(ctx['framework'], ctx['framework'])} across six core areas: "
-        f"{', '.join(AREA_ORDER)}. Data was collected {ctx['collected_at']}. {posture}"
+        f"{FRAMEWORK_NAMES.get(ctx['framework'], ctx['framework'])} {coverage} {collected} {posture}"
     )
     rows = [("Failed findings", s.get("failed", 0))]
     rows += [(f"    {sev}", by_sev.get(sev, 0)) for sev in SEVERITY_ORDER]
@@ -491,12 +529,30 @@ def build_detailed(doc, ctx, number):
         "Accepted findings are listed in their own section."
     )
     failed = [f for f in ctx["findings"] if f["status"] == "fail"]
-    for i, area in enumerate(AREA_ORDER + sorted({f["area"] for f in failed} - set(AREA_ORDER)), 1):
+    counts = area_check_counts(ctx)
+    for i, area in enumerate(counts, 1):
         area_failed = [f for f in failed if f["area"] == area]
+        n_eval, n_skip = counts[area]
         doc.add_heading(f"{number}.{i} {area}", level=2)
+        skip_note = (
+            f"{n_skip} check(s) in this area were skipped because the snapshot lacked the data they need "
+            "(see Appendix: Scope & Methodology)."
+        )
         if not area_failed:
-            doc.add_paragraph("No failing findings in this area.")
+            if n_eval == 0 and n_skip:
+                doc.add_paragraph(
+                    f"Not evaluated: the snapshot had no data for this area's {n_skip} check(s), so none of its "
+                    "controls were tested. This is not a passing result (see Appendix: Scope & Methodology)."
+                )
+            elif n_eval == 0:
+                doc.add_paragraph("Not evaluated: no automated check in this framework covers this area.")
+            elif n_skip:
+                doc.add_paragraph(f"No failing findings in the {n_eval} evaluated check(s). " + skip_note)
+            else:
+                doc.add_paragraph("No failing findings in this area.")
             continue
+        if n_skip:
+            doc.add_paragraph(skip_note)
         grouped = group_by_check(area_failed)
         for check_id in sorted(grouped, key=lambda c: (min(severity_key(f["severity"]) for f in grouped[c]), c)):
             fs = sorted(grouped[check_id], key=lambda f: severity_key(f["severity"]))
@@ -527,7 +583,15 @@ def build_appendix(doc, ctx):
     doc.add_heading("Appendix: Scope & Methodology", level=1)
 
     doc.add_heading("Scope", level=2)
-    doc.add_paragraph(f"In scope: {', '.join(AREA_ORDER)}.")
+    evaluated_areas, unevaluated_areas = split_areas(ctx)
+    if unevaluated_areas:
+        doc.add_paragraph(f"In scope and evaluated: {', '.join(evaluated_areas) or 'none'}.")
+        doc.add_paragraph(
+            f"In scope but not evaluated (the snapshot lacked the data their checks need): "
+            f"{', '.join(unevaluated_areas)}."
+        )
+    else:
+        doc.add_paragraph(f"In scope: {', '.join(evaluated_areas)}.")
     doc.add_paragraph(f"Out of scope for this version: {OUT_OF_SCOPE}")
 
     doc.add_heading("Data source", level=2)
@@ -772,7 +836,8 @@ def build(args):
         "milestones": milestones,
         "status": meta["Report Status"],
         "variant_note": args.variant_note if args.variant_note is not None else meta.get("Report Variant Note", ""),
-        "collected_at": format_timestamp(summary["collected_at"]) if summary.get("collected_at") else "unknown",
+        "collected_at": format_timestamp(summary["collected_at"]) if summary.get("collected_at") else "Not recorded",
+        "collected_known": bool(summary.get("collected_at")),
         "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
         "snapshot": snapshot,
         "data_source": args.data_source,
