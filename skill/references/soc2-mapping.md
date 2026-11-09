@@ -307,6 +307,33 @@ change record.
 
 ---
 
+## 11. Regional Footprint
+
+**Criteria:** CC6.1
+
+**Why it matters:** CC6.1's points of focus include identifying and managing the
+inventory of information assets. An entity that says it operates in two regions
+but has an instance, a bucket or an open security group in a third has assets
+outside its inventory, and outside the monitoring, patching and change control
+built around the regions it knows about. A region nobody uses is also where an
+attacker with stolen credentials goes to run resources unseen. Auditors ask
+which regions are in use and look for anything outside them.
+
+**AWS evidence that would satisfy it:**
+- The operating regions, confirmed with the client and recorded in
+  `engagement-info.md` — manual
+- Nothing outside those regions apart from AWS-created defaults, or an owner
+  and a reason for what is there — `resources_outside_operating_regions`
+- An organization SCP denying the unused regions (`aws:RequestedRegion`), confirmed
+  from the management account — `region_deny_scp` in the exceptions file
+
+With operating regions declared, the Detection & Monitoring checks above still
+report every collected region, but a gap outside the operating regions is a Low
+advisory: the service is still worth running there to catch misuse, unless an
+SCP denies the region.
+
+---
+
 ## Sources
 
 - [Secureframe — SOC 2 Common Criteria](https://secureframe.com/hub/soc-2/common-criteria)

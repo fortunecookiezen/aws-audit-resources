@@ -92,7 +92,7 @@ def _versions(summary):
 
 
 def _fmt(f):
-    return f"{f['check_id']} — {f['resource']} [{f['status']}]"
+    return f"{f['check_id']} — {f['resource']} [{f['status']}{', advisory' if f.get('advisory') else ''}]"
 
 
 def print_report(baseline, retest, d):
@@ -113,6 +113,15 @@ def print_report(baseline, retest, d):
             "pass/fail status is framework-independent (only the displayed "
             "control refs differ), so this diff is still valid, but don't "
             "expect the control references to line up between runs."
+        )
+    b_regions = baseline["summary"].get("operating_regions")
+    r_regions = retest["summary"].get("operating_regions")
+    if b_regions != r_regions:
+        print(
+            f"WARNING: the baseline and retest used different operating regions "
+            f"({', '.join(b_regions or []) or 'none declared'} vs {', '.join(r_regions or []) or 'none declared'}), "
+            "so severities and region findings outside them differ for that reason alone. Rerun run_checks.py "
+            "on the baseline snapshot with the retest's engagement-info.md to compare like with like."
         )
     if not retest["summary"].get("collection_errors_recorded"):
         print(

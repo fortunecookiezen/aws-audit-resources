@@ -37,8 +37,10 @@ Output schema (top level):
       "account_id": "<12-digit account id, from sts:GetCallerIdentity>",
       "caller_arn": "<arn of the identity that ran the collection>",
       "regions": ["us-east-1", ...],
+      "enabled_regions": ["us-east-1", ...],
+      "region_opt_in_status": {"us-east-1": "opt-in-not-required", "af-south-1": "not-opted-in", ...},
       "iam": { ... },
-      "s3": { ... },
+      "s3": { ... },            # each bucket also carries "region" (from GetBucketLocation)
       "cloudtrail": { ... },
       "ec2": { ... },
       "account_contacts": { ... },
@@ -157,6 +159,19 @@ def get_regions(session, args):
         return sorted(r["RegionName"] for r in resp["Regions"])
     # default: caller's configured region, or us-east-1 if unset
     return [session.region_name or "us-east-1"]
+
+
+def collect_enabled_regions(session):
+    """{region: opt-in status} for every region AWS lists, including opt-in
+    regions that aren't enabled, or None if the call failed. A region that is
+    "not-opted-in" can't hold resources, so it's evidence on its own; every
+    other region can, whether or not it was collected."""
+    ec2 = session.client("ec2", region_name="us-east-1")
+    regions = _try(lambda: ec2.describe_regions(AllRegions=True)["Regions"], default=None,
+                   label="ec2.describe_regions", region="us-east-1")
+    if regions is None:
+        return None
+    return {r["RegionName"]: r.get("OptInStatus") for r in sorted(regions, key=lambda r: r["RegionName"])}
 
 
 # Every failed call, written to the snapshot as collection_errors, tagged
@@ -522,6 +537,18 @@ def collect_s3(session, account_id):
         name = b["Name"]
         entry = {"name": name, "unreadable": []}
         failed = object()
+
+        # GetBucketLocation returns no constraint for us-east-1 and the legacy
+        # "EU" for eu-west-1; everything else is the region name.
+        location = _try(
+            lambda: s3api.get_bucket_location(Bucket=name).get("LocationConstraint"),
+            default=None, label=f"get_bucket_location({name})", failed=failed,
+        )
+        if location is failed:
+            entry["unreadable"].append("region")
+            entry["region"] = None
+        else:
+            entry["region"] = {None: "us-east-1", "": "us-east-1", "EU": "eu-west-1"}.get(location, location)
 
         pab = _try(
             lambda: s3api.get_public_access_block(Bucket=name)["PublicAccessBlockConfiguration"],
@@ -1182,12 +1209,26 @@ def main():
     regions = get_regions(session, args)
     print(f"Regions: {', '.join(regions)}", file=sys.stderr)
 
+    CURRENT_SECTION = "regions"
+    region_opt_in = collect_enabled_regions(session)
+    enabled = None if region_opt_in is None else [r for r, s in region_opt_in.items() if s != "not-opted-in"]
+    uncollected = sorted(set(enabled or []) - set(regions))
+    if uncollected:
+        print(f"WARNING: {len(uncollected)} enabled region(s) not collected: {', '.join(uncollected)}. "
+              "Resources there won't be found, so a check for resources outside the operating regions "
+              "will be incomplete. Use --all-regions for an audit.", file=sys.stderr)
+
     snapshot = {
         "collected_at": utcnow_iso(),
         "tool_version": version,
         "account_id": account_id,
         "caller_arn": caller_arn,
         "regions": regions,
+        # Every region enabled for the account (None if describe_regions
+        # failed), and each region's opt-in status, so run_checks can tell a
+        # region that wasn't collected from one that can't hold resources.
+        "enabled_regions": enabled,
+        "region_opt_in_status": region_opt_in,
     }
 
     print("Collecting IAM...", file=sys.stderr)

@@ -20,6 +20,7 @@ before filling the file in.*
 
 - Report Status: DRAFT
 - Report Variant Note:
+- Operating Regions:
 - Auditor Name:
 - Auditor Title:
 - Auditor Organization:
@@ -37,6 +38,15 @@ before filling the file in.*
   with an auditor-reviewed exceptions file applied (see Section 3)" or
   "Retest 1 - post-remediation (see Section 6, Evidence handling)"). Leave
   it blank for a first-pass report.*
+- *`Operating Regions` lists the AWS regions the client runs workloads in,
+  comma-separated (e.g. `us-east-1, us-east-2`), as confirmed with the
+  client at kickoff. `run_checks.py` reads it: outside these regions,
+  region-level controls such as GuardDuty become Low advisories, and
+  anything found there is reported under Regional Footprint whatever its
+  own compliance. Still collect with `--all-regions`, or strays can't be
+  found. Leave it blank to treat every collected region as operating. If
+  you change it, run `run_checks.py` again before building the report;
+  `build_report.py` warns when the two disagree.*
 - *`Auditor Name/Title/Organization/Contact` identify who performed the
   audit and produced the report - printed as a "Prepared By" block on the
   cover page. `Auditor Contact` is email and/or phone, whichever the auditor

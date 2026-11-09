@@ -30,6 +30,8 @@ countries and can't be transcribed into `exceptions.json`.*
 |---|---|
 | AWS Account ID(s) in scope | |
 | Framework being audited (CIS / Well-Architected / SOC 2 / ISO 27001) | |
+| AWS regions you operate in (comma-separated, e.g. us-east-1, us-east-2) | |
+| Are other regions denied by an organization SCP? If yes: the policy ID, and output of `aws organizations describe-policy` and `list-targets-for-policy` from the management account, attached under evidence | |
 | Requested by (auditor name) | |
 | Request date (YYYY-MM-DD) | |
 | Response due date (YYYY-MM-DD) | |

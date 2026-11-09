@@ -63,6 +63,22 @@
         {"text": "Report cites SOC 2 Common Criteria IDs for the new areas (e.g. CC7.2 for GuardDuty, CC6.1 for encryption, CC7.5/CC9.1 for backups)"},
         {"text": "Output is delivered as a .docx file"}
       ]
+    },
+    {
+      "id": 4,
+      "prompt": "SOC 2 audit for account 111122223333. We only run workloads in us-east-1, and that's recorded in our engagement-info.md (fixtures/engagement-info-regions.md). The collector snapshot from all regions is fixtures/soc2-regions-snapshot.json. Give me the Word report, and tell me if anything is running where it shouldn't be.",
+      "files": ["fixtures/soc2-regions-snapshot.json", "fixtures/engagement-info-regions.md"],
+      "expected_output": "A .docx SOC 2 report that treats us-east-1 as the only operating region: eu-west-1 is reported under Regional Footprint as High because it holds an EC2 instance, a custom VPC, an S3 bucket and a security group open to SSH from the internet; us-west-2 holds only AWS defaults and passes; detection services missing in us-west-2 and eu-west-1 are Low advisories rather than High/Medium failures, while us-east-1's own failures keep their full severity.",
+      "expectations": [
+        {"text": "Report states that the client's operating region is us-east-1, taken from engagement-info.md"},
+        {"text": "Report identifies eu-west-1 as holding resources outside the operating regions, naming EC2 instance i-0straycrypto1, VPC vpc-0stray1, security group sg-0stray22 and S3 bucket acme-eu-backups, rated High because sg-0stray22 allows SSH from 0.0.0.0/0"},
+        {"text": "Report still rates sg-0stray22's open SSH (sg_no_open_admin_ports_ipv4) as Critical: being outside the operating regions doesn't lower a resource's own findings"},
+        {"text": "Report does not report us-west-2 under Regional Footprint as having resources (only AWS-created defaults are there)"},
+        {"text": "Report presents GuardDuty, Security Hub, Inspector, Access Analyzer and AWS Config being off in us-west-2 and eu-west-1 as Low-severity advisories, not High or Medium failures"},
+        {"text": "Report keeps us-east-1's EBS encryption-by-default failure at Medium (an operating region keeps full severity)"},
+        {"text": "Report's appendix includes a per-region table showing us-east-1 as operating and us-west-2 and eu-west-1 as not"},
+        {"text": "Output is delivered as a .docx file"}
+      ]
     }
   ]
 }
