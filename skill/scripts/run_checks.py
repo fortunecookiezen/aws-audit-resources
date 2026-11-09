@@ -2073,18 +2073,57 @@ def _apply_operating_regions(findings, operating, denied, scp_note, inventory, d
         f["evidence"] = prefix + f["evidence"]
 
 
+def _resource_id(resource):
+    """The bare ID in a finding's resource string: without a trailing
+    " (region)" or " (vpc-...)", and without a "kind:" prefix such as
+    "instance:" or "kms:" (an ARN is kept whole)."""
+    res = re.sub(r"\s+\([^)]*\)$", "", str(resource or ""))
+    if ":" in res and not res.startswith("arn:"):
+        res = res.split(":", 1)[1]
+    return res
+
+
+def _is_exposure(f):
+    # Every exposure check is Critical or High by default; a result rated
+    # lower isn't reachable from the internet (s3_block_public_access on a
+    # bucket the account-level setting already covers is Low).
+    return (f["check_id"] in EXPOSURE_CHECKS and f["status"] in ("fail", "accepted")
+            and f["severity"] in ("Critical", "High"))
+
+
+def _out_of_region_resources(region, labels, findings):
+    """One entry per resource in `region`: its type and ID, why it's
+    internet-exposed (if it is), and the other failing or accepted findings
+    against it - the detail behind the region's finding, for the report's
+    appendix and the remediation tracker."""
+    related = {}
+    for f in findings:
+        if f.get("region") == region and f["status"] in ("fail", "accepted"):
+            related.setdefault(_resource_id(f["resource"]), []).append(f)
+    out = []
+    for label in labels:
+        kind, rid = label.rsplit(" ", 1)
+        fs = related.get(rid, [])
+        out.append({
+            "type": kind,
+            "id": rid,
+            "exposure": [EXPOSURE_CHECKS[f["check_id"]] for f in fs if _is_exposure(f)],
+            "findings": [{"check_id": f["check_id"], "severity": f["severity"], "status": f["status"]}
+                         for f in sorted(fs, key=lambda f: f["check_id"])],
+        })
+    return out
+
+
 def check_resources_outside_operating_regions(snap, operating, findings, inventory):
     """One result per collected region outside the operating regions. Run
-    after every other check: internet exposure comes from their findings."""
+    after every other check: internet exposure comes from their findings.
+    A failing result carries the full per-resource list in "resources"; the
+    evidence names at most INVENTORY_LIST_MAX of them."""
     if inventory is None or not operating:
         return None
     exposed = {}
     for f in findings:
-        # Every exposure check is Critical or High by default; a result rated
-        # lower isn't reachable from the internet (s3_block_public_access on
-        # a bucket the account-level setting already covers is Low).
-        if (f["check_id"] in EXPOSURE_CHECKS and f["status"] in ("fail", "accepted") and f.get("region")
-                and f["severity"] in ("Critical", "High")):
+        if _is_exposure(f) and f.get("region"):
             exposed.setdefault(f["region"], []).append(f"{f['resource']} ({EXPOSURE_CHECKS[f['check_id']]})")
     regions = sorted((set(snap.get("regions") or []) | set(inventory)) - set(operating))
     results = []
@@ -2103,11 +2142,13 @@ def check_resources_outside_operating_regions(snap, operating, findings, invento
         evidence = (f"{len(items)} resource(s) outside the operating regions ({', '.join(operating)}): "
                     + ", ".join(f"{n} {k}" for k, n in sorted(kinds.items())) + ". "
                     + "; ".join(shown)
-                    + (f"; and {len(items) - len(shown)} more." if len(items) > len(shown) else "."))
+                    + (f"; and {len(items) - len(shown)} more (all listed in the report's appendix and the "
+                       "remediation tracker)." if len(items) > len(shown) else "."))
         if exposed.get(region):
             evidence += " Internet-exposed: " + "; ".join(exposed[region]) + "."
         results.append({"resource": region, "region": region, "status": "fail",
-                        "severity": "High" if exposed.get(region) else "Medium", "evidence": evidence})
+                        "severity": "High" if exposed.get(region) else "Medium", "evidence": evidence,
+                        "resources": _out_of_region_resources(region, items, findings)})
     return results
 
 
@@ -2361,6 +2402,7 @@ def run(snapshot, framework, exceptions=None, base_dir=None, operating_regions=N
                 "region": _finding_region(r["resource"], r.get("region"), lookup),
                 "status": r["status"],
                 "evidence": r["evidence"],
+                **({"resources": r["resources"]} if "resources" in r else {}),
             })
 
     selected = {c: m for c, m in CHECKS_META.items() if framework == "all" or framework in m["refs"]}

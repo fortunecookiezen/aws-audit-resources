@@ -77,6 +77,8 @@
         {"text": "Report presents GuardDuty, Security Hub, Inspector, Access Analyzer and AWS Config being off in us-west-2 and eu-west-1 as Low-severity advisories, not High or Medium failures"},
         {"text": "Report keeps us-east-1's EBS encryption-by-default failure at Medium (an operating region keeps full severity)"},
         {"text": "Report's appendix includes a per-region table showing us-east-1 as operating and us-west-2 and eu-west-1 as not"},
+        {"text": "Report has an appendix listing each of the four eu-west-1 resources individually, marking sg-0stray22 as internet-exposed"},
+        {"text": "A remediation tracker CSV is delivered alongside the report, with one row per failing finding and a separate row for each eu-west-1 resource, plus empty Owner, Target date, Disposition and Ticket columns"},
         {"text": "Output is delivered as a .docx file"}
       ]
     }

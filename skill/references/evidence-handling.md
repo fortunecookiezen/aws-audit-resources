@@ -54,7 +54,7 @@ A private engagement repository must be private and must not be a fork of this r
    python3 scripts/build_report.py "$AUDIT_DIR/findings.json"
    ```
 
-   At this point the directory holds the full evidence package: engagement info, the documentation request response and its evidence, the exceptions file, raw snapshot, evaluated findings, and the human-readable report. Retests and the final report go into the same directory (`skill/references/remediation-and-retesting.md`).
+   At this point the directory holds the full evidence package: engagement info, the documentation request response and its evidence, the exceptions file, raw snapshot, evaluated findings, the human-readable report, and the remediation tracker CSV `build_report.py` writes beside it (with its timestamped `.bak.csv` versions, the record of who decided what and when). Retests and the final report go into the same directory (`skill/references/remediation-and-retesting.md`).
 
 5. **Close out the engagement** once the report is `FINAL` — see the next section.
 

@@ -57,6 +57,7 @@ except ImportError:
 
 
 from run_checks import CHECKS_META, REGION_LEVEL_CHECKS, _region_inventory, parse_operating_regions
+from remediation_tracker import REGION_CHECK, write_tracker
 from tool_version import tool_version, version_problem
 
 SKILL_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -714,6 +715,9 @@ def build_appendix(doc, ctx):
     if snap.get("regions"):
         add_bullet(doc, ", ".join(snap["regions"]), bold_prefix="Regions: ")
     add_bullet(doc, os.path.basename(ctx["findings_path"]), bold_prefix="Findings file: ")
+    add_bullet(doc, f"{ctx['tracker_name']} (one row per failing or accepted finding, and per resource outside "
+                    "the operating regions; kept with this report as the record of how each was handled)",
+               bold_prefix="Remediation tracker: ")
     versions = tool_versions(ctx)
     if len(set(versions.values())) == 1:
         add_bullet(doc, f"{versions['collection']} (collection, checks and report)", bold_prefix="Tool version: ")
@@ -921,6 +925,58 @@ def output_filename(account_id, framework, label, status):
     return "_".join(parts) + ".docx"
 
 
+def tracker_filename(account_id, framework, label):
+    parts = ["AWS_Security_Audit", account_id or "unknown", framework]
+    if label:
+        parts.append(re.sub(r"[^A-Za-z0-9._-]+", "-", label))
+    return "_".join(parts) + "_remediation-tracker.csv"
+
+
+def previous_tracker(args, out_dir, tracker_path):
+    """The tracker to carry filled-in columns forward from: --previous-tracker,
+    else the output file itself, else the newest other tracker for this
+    account and framework in the output directory (the baseline's, on a
+    retest). None for the first build."""
+    if args.previous_tracker:
+        if not os.path.exists(args.previous_tracker):
+            raise ValueError(f"--previous-tracker {args.previous_tracker} not found")
+        return args.previous_tracker
+    if os.path.exists(tracker_path):
+        return None  # write_tracker merges from, and backs up, the existing file
+    prefix = os.path.basename(tracker_path).split("_remediation-tracker.csv")[0]
+    stem = "_".join(prefix.split("_")[:4])  # AWS_Security_Audit_<account>_<framework>
+    candidates = [os.path.join(out_dir, n) for n in os.listdir(out_dir)
+                  if n.startswith(stem) and n.endswith("_remediation-tracker.csv")]
+    return max(candidates, key=os.path.getmtime) if candidates else None
+
+
+def build_region_resources_appendix(doc, ctx):
+    """Appendix listing every resource outside the operating regions - the
+    full detail behind resources_outside_operating_regions, whose evidence
+    names at most 15 per region."""
+    entries = [(f, r) for f in ctx["findings"]
+               if f["check_id"] == REGION_CHECK and f["status"] in ("fail", "accepted")
+               for r in f.get("resources") or []]
+    if not entries:
+        return
+    doc.add_heading("Appendix: Resources Outside the Operating Regions", level=1)
+    doc.add_paragraph(
+        f"Every resource found outside the operating regions ({', '.join(ctx['summary'].get('operating_regions') or [])}), "
+        "AWS-created defaults excluded. Each needs an owner and a decision: delete it, migrate it, or add its "
+        "region to the operating regions. Each is also a row in the remediation tracker "
+        f"({ctx['tracker_name']}), where that decision is recorded."
+    )
+    rows = []
+    for f, r in sorted(entries, key=lambda e: (e[0]["region"], not e[1]["exposure"], e[1]["type"], e[1]["id"])):
+        rows.append((
+            f["region"], r["type"], r["id"],
+            "; ".join(r["exposure"]) or "No",
+            "; ".join(f"{x['check_id']} ({x['severity']})" for x in r["findings"]) or "—",
+        ))
+    add_table(doc, ["Region", "Type", "Resource", "Internet-exposed", "Other findings"],
+              rows, [0.9, 1.1, 1.8, 1.3, 1.5], font_size=8)
+
+
 def build(args):
     with open(args.findings) as f:
         result = json.load(f)
@@ -959,7 +1015,11 @@ def build(args):
         "findings_path": args.findings,
         "manual_checks": parse_manual_checks(),
         "report_tool_version": tool_version(),
+        "tracker_name": tracker_filename(summary.get("account_id"), framework, args.label),
     }
+    out_dir = args.out_dir or engagement_dir
+    tracker_path = os.path.join(out_dir, ctx["tracker_name"])
+    previous = previous_tracker(args, out_dir, tracker_path)
 
     doc = setup_document(ctx)
     build_cover(doc, ctx)
@@ -971,13 +1031,16 @@ def build(args):
         number += 1
     build_passing(doc, ctx, number)
     build_detailed(doc, ctx, number + 1)
+    build_region_resources_appendix(doc, ctx)
     build_appendix(doc, ctx)
 
-    out_dir = args.out_dir or engagement_dir
     out_path = os.path.join(out_dir, output_filename(summary.get("account_id"), framework, args.label, ctx["status"]))
     doc.save(out_path)
-    return out_path, (snapshot_warnings + date_warnings(ctx) + tool_version_warnings(ctx)
-                      + finalization_warnings(ctx) + operating_regions_warnings(ctx, engagement_path))
+    _, counts, tracker_notes = write_tracker(result, args.findings, tracker_path, previous)
+    tracker_notes.insert(0, f"Wrote {tracker_path}: "
+                         + ", ".join(f"{n} {k.lower()}" for k, n in sorted(counts.items())) + ".")
+    return out_path, tracker_notes, (snapshot_warnings + date_warnings(ctx) + tool_version_warnings(ctx)
+                                     + finalization_warnings(ctx) + operating_regions_warnings(ctx, engagement_path))
 
 
 def operating_regions_warnings(ctx, engagement_path):
@@ -1005,14 +1068,20 @@ def main():
     parser.add_argument("--data-source", default="Live AWS API collection via collect_aws_data.py (read-only audit role)",
                         help="how the snapshot was produced, for the methodology appendix")
     parser.add_argument("--out-dir", help="output directory (default: the findings file's directory)")
+    parser.add_argument("--previous-tracker",
+                        help="remediation tracker CSV to carry Owner, Disposition and the other filled-in "
+                             "columns forward from (default: this build's tracker if it exists, else the newest "
+                             "tracker for this account and framework in the output directory)")
     args = parser.parse_args()
 
     try:
-        out_path, warnings = build(args)
-    except BuildError as e:
+        out_path, notes, warnings = build(args)
+    except (BuildError, ValueError) as e:
         print(f"ERROR: {e}", file=sys.stderr)
         sys.exit(1)
     print(f"Wrote {out_path}", file=sys.stderr)
+    for n in notes:
+        print(n, file=sys.stderr)
     for w in warnings:
         print(f"WARNING: {w}", file=sys.stderr)
 

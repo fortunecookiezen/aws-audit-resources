@@ -25,7 +25,11 @@ no retest is a TODO with extra steps.
   finding closed because it would be convenient to, only because the retest
   shows it.
 - **Account/engagement owner** — tracks remediation status across the full
-  findings list (a simple tracker: finding, owner, target date, status) and
+  findings list in the remediation tracker `build_report.py` writes next to
+  the report (`..._remediation-tracker.csv`: one row per failing or accepted
+  finding and per resource outside the operating regions, with Owner,
+  Target date, Disposition, Ticket, Closed date, Closure evidence and Notes
+  columns to fill in) and
   decides, for anything that won't be fixed, whether it goes through the
   acceptance process instead.
 
@@ -136,11 +140,29 @@ step updates which row.
    Narrative's `Findings Draft` row to today's date (YYYY-MM-DD); a later retest doesn't
    change that row, it's a one-time "a draft now exists" milestone.
 
-7. **Close the loop on the remediation tracker.** Mark each fixed finding
-   closed with the retest date and a pointer to the specific evidence that
-   proves it (which snapshot/findings file, which line). "Fixed" without a
-   pointer back to the retest that proved it is exactly the unverified claim
-   this whole process exists to avoid.
+7. **Close the loop on the remediation tracker.** Build the retest report
+   with `--label retest-N`; its tracker carries every filled-in column
+   forward from the newest earlier tracker in the directory (or the one
+   named with `--previous-tracker`). It sets Tracker status itself, from the
+   retest rather than anyone's say-so:
+   - **Closed (passed in retest)**: the check ran and the resource now
+     passes.
+   - **Closed (resource no longer present)**: the check ran and the
+     resource is gone.
+   - **Closed (no longer found outside the operating regions)**: for an
+     out-of-region resource, it's gone or its region was added to the
+     operating regions.
+   - **Not re-verified**: the check was skipped or incomplete in the retest.
+     The row stays open until a retest covers it.
+   - **Reopened**: it failed again after closing.
+
+   Every row also records "Last verified by", the findings file and
+   collection time that showed it. Fill in Closed date and Closure evidence
+   (which snapshot/findings file, which line) for each closed row. "Fixed"
+   without a pointer back to the retest that proved it is exactly the
+   unverified claim this whole process exists to avoid. Keep every
+   tracker version (the `.bak.csv` copies included) in the evidence
+   package.
 
 8. **Repeat per remediation wave** until everything remaining is either
    accepted (`exceptions.json`, via `accepting-findings-process.md`) or
