@@ -442,6 +442,29 @@ CHECKS_META = {
         "remediation": "aws ecr put-image-tag-mutability --repository-name <name> --image-tag-mutability IMMUTABLE (deploy by digest or unique tags, not :latest).",
         "refs": {"cis": _NOT_CIS, "well_architected": "SEC11-BP06", "soc2": "CC8.1", "iso27001": "A.8.32"},
     },
+
+    # --- Regional Footprint -------------------------------------------------
+    # Evaluated only when engagement-info.md declares Operating Regions. One
+    # result per collected region outside them; computed after every other
+    # check, because internet exposure comes from their findings.
+    "resources_outside_operating_regions": {
+        "title": "No resources exist outside the declared operating regions",
+        "area": "Regional Footprint",
+        "severity": "Medium",
+        "remediation": "Find the owner of each listed resource. Delete or migrate anything that shouldn't be there; if the region is genuinely in use, add it to Operating Regions in engagement-info.md. Then deny the unused regions with an organization SCP on aws:RequestedRegion (exempting global services) so nothing new can be created there.",
+        # SOC 2 CC6.1's points of focus include identifying and managing the
+        # inventory of information assets; ISO 27001 A.5.9 is the asset
+        # inventory and A.8.3 names deny policies for unapproved regions.
+        # Neither CIS v7.0.0 nor the Well-Architected Security Pillar has a
+        # specific control for it, so those are informational, as for
+        # default_vpc_exists.
+        "refs": {
+            "cis": _NOT_CIS,
+            "well_architected": "Not a specific SEC best practice (AWS best practice)",
+            "soc2": "CC6.1",
+            "iso27001": "A.5.9, A.8.3",
+        },
+    },
 }
 
 FRAMEWORK_KEYS = {"cis", "well_architected", "soc2", "iso27001"}
@@ -1834,6 +1857,330 @@ def check_ecr_tag_immutability(snap):
     } for r in ecr.get("repositories", [])]
 
 
+# ---------------------------------------------------------------------------
+# Operating regions. engagement-info.md may declare the regions the client
+# operates in. Region-level controls (the detection services, EBS
+# encryption by default) and the AWS-created defaults (default VPC and its
+# security group) failing OUTSIDE them become Low-severity advisories rather
+# than full findings - or pass, when an attested region-deny SCP covers the
+# region and nothing was found there. Every resource-level check runs
+# everywhere at full severity, and resources_outside_operating_regions
+# reports anything a person created outside them. With no regions declared,
+# every collected region is treated as operating, as before.
+# ---------------------------------------------------------------------------
+
+REGION_RE = re.compile(r"^[a-z]{2,4}(?:-[a-z]+)+-\d+$")
+_TRAILING_REGION_RE = re.compile(r"\(([a-z]{2,4}(?:-[a-z]+)+-\d+)\)$")
+
+# Controls set once per region. Off in a region the client doesn't use is an
+# advisory: an attacker can still use that region unseen.
+REGION_LEVEL_CHECKS = {
+    "guardduty_enabled", "securityhub_enabled", "inspector_enabled",
+    "access_analyzer_enabled", "config_recorder_enabled", "ebs_default_encryption",
+}
+# Checks whose failure is advisory outside the operating regions only when
+# the resource is one AWS created (a default VPC or default security group).
+AWS_DEFAULT_RESOURCE_CHECKS = {"default_vpc_exists", "sg_default_restricts_traffic", "vpc_flow_logs_enabled"}
+# Failing (or accepted) results that make a region's resources reachable
+# from the internet, raising resources_outside_operating_regions to High.
+EXPOSURE_CHECKS = {
+    "sg_no_open_admin_ports_ipv4": "security group open to 0.0.0.0/0 on an admin port",
+    "sg_no_open_admin_ports_ipv6": "security group open to ::/0 on an admin port",
+    "rds_instance_not_public": "publicly accessible RDS instance",
+    "rds_snapshot_not_public": "publicly shared RDS snapshot",
+    "ebs_snapshot_not_public": "publicly restorable EBS snapshot",
+    "resource_policy_no_public_principal": "resource policy allowing Principal \"*\"",
+    "s3_block_public_access": "S3 bucket without Block Public Access",
+}
+POST_CHECKS = {"resources_outside_operating_regions"}
+INVENTORY_SECTIONS = ("ec2", "rds", "dynamodb", "elasticache", "kms", "secretsmanager",
+                      "ecr", "sns", "ebs", "logs", "s3", "cloudtrail")
+INVENTORY_LIST_MAX = 15
+
+
+def parse_operating_regions(path):
+    """(sorted regions or None, warnings) from the "- Operating Regions:" line
+    in engagement-info.md's Report Metadata section. None means none were
+    declared (no file, no line, or a blank value)."""
+    if not path or not os.path.exists(path):
+        return None, []
+    in_metadata = False
+    with open(path) as f:
+        for line in f:
+            s = line.strip()
+            if s.startswith("## "):
+                in_metadata = s[3:].strip().lower() == "report metadata"
+                continue
+            m = re.match(r"^-\s*Operating Regions:\s*(.*)$", s, re.IGNORECASE) if in_metadata else None
+            if not m:
+                continue
+            tokens = [t for t in re.split(r"[,\s]+", m.group(1)) if t]
+            bad = [t for t in tokens if not REGION_RE.match(t)]
+            warnings = [f"Operating Regions in {os.path.basename(path)}: ignored {', '.join(repr(t) for t in bad)} "
+                        "(not region names like us-east-1)."] if bad else []
+            return sorted({t for t in tokens if REGION_RE.match(t)}) or None, warnings
+    return None, []
+
+
+def _region_lookup(snap):
+    """({resource id: region} for results whose resource string doesn't carry
+    its region, {ids of resources AWS created by default})."""
+    ec2 = snap.get("ec2") or {}
+    lookup, defaults = {}, set()
+    for sg in ec2.get("security_groups") or []:
+        lookup[sg.get("group_id")] = sg.get("region")
+        if sg.get("group_name") == "default":
+            defaults.add(sg.get("group_id"))
+    for v in ec2.get("vpcs") or []:
+        lookup[v.get("vpc_id")] = v.get("region")
+        if v.get("is_default"):
+            defaults.add(v.get("vpc_id"))
+    for i in ec2.get("instances") or []:
+        lookup[i.get("instance_id")] = i.get("region")
+    for b in (snap.get("s3") or {}).get("buckets") or []:
+        lookup[b.get("name")] = b.get("region")
+    return lookup, defaults
+
+
+def _finding_region(resource, explicit, lookup):
+    if explicit:
+        return explicit
+    res = str(resource or "")
+    if REGION_RE.match(res):
+        return res
+    m = _TRAILING_REGION_RE.search(res)
+    if m:
+        return m.group(1)
+    return lookup.get(res) or lookup.get(res.split(" ", 1)[0])
+
+
+def _region_inventory(snap):
+    """{region: [label, ...]} of resources a person created (AWS defaults
+    excluded), or None when the snapshot has none of the sections it's built
+    from. AWS-managed KMS keys and service-owned secrets are already excluded
+    or flagged by the collector."""
+    if not any(s in snap for s in INVENTORY_SECTIONS):
+        return None
+    inv = {}
+
+    def add(region, label):
+        if region:
+            inv.setdefault(region, []).append(label)
+
+    account_id = snap.get("account_id")
+    ec2 = snap.get("ec2") or {}
+    for i in ec2.get("instances") or []:
+        if i.get("state") not in ("terminated", "shutting-down"):
+            add(i.get("region"), f"EC2 instance {i.get('instance_id')}")
+    for v in ec2.get("vpcs") or []:
+        if not v.get("is_default"):
+            add(v.get("region"), f"VPC {v.get('vpc_id')}")
+    for sg in ec2.get("security_groups") or []:
+        if sg.get("group_name") != "default":
+            add(sg.get("region"), f"security group {sg.get('group_id')}")
+    rds = snap.get("rds") or {}
+    for d in rds.get("instances") or []:
+        add(d.get("region"), f"RDS instance {d.get('id')}")
+    for c in rds.get("clusters") or []:
+        add(c.get("region"), f"RDS cluster {c.get('id') or c.get('cluster_id')}")
+    for s in rds.get("snapshots") or []:
+        add(s.get("region"), f"RDS {s.get('kind') or ''} snapshot {s.get('id')}".replace("  ", " "))
+    for t in (snap.get("dynamodb") or {}).get("tables") or []:
+        add(t.get("region"), f"DynamoDB table {t.get('name')}")
+    ec = snap.get("elasticache") or {}
+    for g in ec.get("replication_groups") or []:
+        add(g.get("region"), f"ElastiCache replication group {g.get('id')}")
+    for c in ec.get("clusters") or []:
+        add(c.get("region"), f"ElastiCache cluster {c.get('id')}")
+    for k in (snap.get("kms") or {}).get("keys") or []:
+        add(k.get("region"), f"KMS key {(k.get('aliases') or [k.get('key_id')])[0]}")
+    for s in (snap.get("secretsmanager") or {}).get("secrets") or []:
+        if not s.get("owning_service"):
+            add(s.get("region"), f"secret {s.get('name')}")
+    for r in (snap.get("ecr") or {}).get("repositories") or []:
+        add(r.get("region"), f"ECR repository {r.get('name')}")
+    for t in (snap.get("sns") or {}).get("topics") or []:
+        add(t.get("region"), f"SNS topic {t.get('name')}")
+    for v in (snap.get("ebs") or {}).get("volumes") or []:
+        add(v.get("region"), f"EBS volume {v.get('volume_id')}")
+    for g in (snap.get("logs") or {}).get("log_groups") or []:
+        add(g.get("region"), f"log group {g.get('name')}")
+    for b in (snap.get("s3") or {}).get("buckets") or []:
+        add(b.get("region"), f"S3 bucket {b.get('name')}")
+    # A single-region trail this account owns lives in its home region; a
+    # multi-region or organization trail (another account's ARN) doesn't.
+    for t in (snap.get("cloudtrail") or {}).get("trails") or []:
+        parts = (t.get("trail_arn") or "").split(":")
+        if len(parts) > 4 and not t.get("is_multi_region_trail") and parts[4] == account_id:
+            add(parts[3], f"CloudTrail trail {t.get('name')}")
+    return inv
+
+
+def _region_deny_scp(exceptions, operating):
+    """(denied regions: set, or "all" for every non-operating region; the
+    evidence note; warnings) from an attested region_deny_scp in --exceptions.
+    An invalid or incomplete attestation is ignored, with a warning."""
+    a = (exceptions or {}).get("region_deny_scp") or {}
+    if a.get("attested") is not True:
+        return set(), None, []
+    name = "region_deny_scp not applied"
+    missing = [k for k in ("attested_by", "attested_date", "policy_id", "denied_regions", "note") if not a.get(k)]
+    if missing:
+        return set(), None, [f"{name}: missing {', '.join(missing)}."]
+    if not _parse_iso_date(a["attested_date"]):
+        return set(), None, [f"{name}: attested_date {a['attested_date']!r} is not a YYYY-MM-DD date."]
+    denied = a["denied_regions"]
+    if denied == "all_non_operating":
+        if not operating:
+            return set(), None, [f"{name}: denied_regions is \"all_non_operating\" but engagement-info.md "
+                                 "declares no Operating Regions."]
+        denied = "all"
+    elif not (isinstance(denied, list) and denied and all(isinstance(r, str) and REGION_RE.match(r) for r in denied)):
+        return set(), None, [f"{name}: denied_regions must be \"all_non_operating\" or a list of region names."]
+    else:
+        denied = set(denied)
+    note = (f"SCP {a['policy_id']} attested by {a['attested_by']} on {a['attested_date']} "
+            f"(not auto-verifiable from a member account): {a['note']}")
+    return denied, note, []
+
+
+def _apply_operating_regions(findings, operating, denied, scp_note, inventory, defaults):
+    """Rate region-level and AWS-default failures outside the operating
+    regions as Low advisories, or pass them where an attested SCP denies the
+    region and nothing was found there. Findings are changed in place."""
+    if not operating:
+        return
+    for f in findings:
+        region = f.get("region")
+        if not region or region in operating or f["status"] != "fail":
+            continue
+        is_default = f["resource"].split(" ", 1)[0] in defaults
+        if f["check_id"] not in REGION_LEVEL_CHECKS and not (f["check_id"] in AWS_DEFAULT_RESOURCE_CHECKS and is_default):
+            continue
+        f["outside_operating_regions"] = True
+        scp_covers = denied == "all" or region in denied
+        if scp_covers and not (inventory or {}).get(region):
+            f["status"] = "pass"
+            f["evidence"] += f" Outside the operating regions, and denied by an organization SCP: {scp_note}"
+            continue
+        f["advisory"] = True
+        f["severity"] = "Low"
+        prefix = ("Advisory, outside the operating regions: unused regions still need this control, because "
+                  "activity there would otherwise go unseen. ")
+        if scp_covers:
+            prefix += ("An SCP is attested to deny this region, but resources were found in it, so the "
+                       "attestation isn't applied here (see resources_outside_operating_regions). ")
+        f["evidence"] = prefix + f["evidence"]
+
+
+def _resource_id(resource):
+    """The bare ID in a finding's resource string: without a trailing
+    " (region)" or " (vpc-...)", and without a "kind:" prefix such as
+    "instance:" or "kms:" (an ARN is kept whole)."""
+    res = re.sub(r"\s+\([^)]*\)$", "", str(resource or ""))
+    if ":" in res and not res.startswith("arn:"):
+        res = res.split(":", 1)[1]
+    return res
+
+
+def _is_exposure(f):
+    # Every exposure check is Critical or High by default; a result rated
+    # lower isn't reachable from the internet (s3_block_public_access on a
+    # bucket the account-level setting already covers is Low).
+    return (f["check_id"] in EXPOSURE_CHECKS and f["status"] in ("fail", "accepted")
+            and f["severity"] in ("Critical", "High"))
+
+
+def _out_of_region_resources(region, labels, findings):
+    """One entry per resource in `region`: its type and ID, why it's
+    internet-exposed (if it is), and the other failing or accepted findings
+    against it - the detail behind the region's finding, for the report's
+    appendix and the remediation tracker."""
+    related = {}
+    for f in findings:
+        if f.get("region") == region and f["status"] in ("fail", "accepted"):
+            related.setdefault(_resource_id(f["resource"]), []).append(f)
+    out = []
+    for label in labels:
+        kind, rid = label.rsplit(" ", 1)
+        fs = related.get(rid, [])
+        out.append({
+            "type": kind,
+            "id": rid,
+            "exposure": [EXPOSURE_CHECKS[f["check_id"]] for f in fs if _is_exposure(f)],
+            "findings": [{"check_id": f["check_id"], "severity": f["severity"], "status": f["status"]}
+                         for f in sorted(fs, key=lambda f: f["check_id"])],
+        })
+    return out
+
+
+def check_resources_outside_operating_regions(snap, operating, findings, inventory):
+    """One result per collected region outside the operating regions. Run
+    after every other check: internet exposure comes from their findings.
+    A failing result carries the full per-resource list in "resources"; the
+    evidence names at most INVENTORY_LIST_MAX of them."""
+    if inventory is None or not operating:
+        return None
+    exposed = {}
+    for f in findings:
+        if _is_exposure(f) and f.get("region"):
+            exposed.setdefault(f["region"], []).append(f"{f['resource']} ({EXPOSURE_CHECKS[f['check_id']]})")
+    regions = sorted((set(snap.get("regions") or []) | set(inventory)) - set(operating))
+    results = []
+    for region in regions:
+        items = inventory.get(region) or []
+        if not items:
+            results.append({"resource": region, "region": region, "status": "pass",
+                            "evidence": "No resources found apart from AWS defaults (default VPC and security "
+                                        "group, AWS-managed keys)."})
+            continue
+        kinds = {}
+        for label in items:
+            kind = label.rsplit(" ", 1)[0]
+            kinds[kind] = kinds.get(kind, 0) + 1
+        shown = items[:INVENTORY_LIST_MAX]
+        evidence = (f"{len(items)} resource(s) outside the operating regions ({', '.join(operating)}): "
+                    + ", ".join(f"{n} {k}" for k, n in sorted(kinds.items())) + ". "
+                    + "; ".join(shown)
+                    + (f"; and {len(items) - len(shown)} more (all listed in the report's appendix and the "
+                       "remediation tracker)." if len(items) > len(shown) else "."))
+        if exposed.get(region):
+            evidence += " Internet-exposed: " + "; ".join(exposed[region]) + "."
+        results.append({"resource": region, "region": region, "status": "fail",
+                        "severity": "High" if exposed.get(region) else "Medium", "evidence": evidence,
+                        "resources": _out_of_region_resources(region, items, findings)})
+    return results
+
+
+def _region_warnings(snap, operating):
+    """Warnings about the declared operating regions and what was collected,
+    and {check_id: [reason]} for checks the gaps leave incomplete."""
+    warnings, incomplete = [], {}
+    collected = set(snap.get("regions") or [])
+    opt_in = snap.get("region_opt_in_status")
+    enabled = snap.get("enabled_regions")
+    if operating:
+        for r in operating:
+            if opt_in and opt_in.get(r) == "not-opted-in":
+                warnings.append(f"Operating region {r} is not enabled for this account (opt-in region not opted in).")
+        missing = [r for r in operating if r not in collected and not (opt_in and opt_in.get(r) == "not-opted-in")]
+        if missing:
+            warnings.append(f"Operating region(s) not collected: {', '.join(missing)}. Their region-level "
+                            "controls weren't checked. Collect with --all-regions.")
+            for c in REGION_LEVEL_CHECKS:
+                incomplete[c] = [f"operating region(s) not collected: {', '.join(missing)}"]
+    if enabled is None:
+        if operating:
+            warnings.append("The snapshot doesn't record which regions are enabled, so resources in regions "
+                            "that weren't collected can't be ruled out. Collect again with the current collector.")
+    else:
+        uncollected = sorted(set(enabled) - collected)
+        if uncollected and operating:
+            incomplete["resources_outside_operating_regions"] = [
+                f"enabled region(s) not collected: {', '.join(uncollected)}"]
+    return warnings, incomplete
+
+
 CHECK_FUNCS = {
     "root_mfa_enabled": check_root_mfa_enabled,
     "root_hardware_mfa": check_root_hardware_mfa,
@@ -1884,6 +2231,8 @@ CHECK_FUNCS = {
     "ebs_snapshot_not_public": check_ebs_snapshot_not_public,
     "ecr_image_scanning": check_ecr_image_scanning,
     "ecr_tag_immutability": check_ecr_tag_immutability,
+    # Run after the others, with extra arguments - see run().
+    "resources_outside_operating_regions": check_resources_outside_operating_regions,
 }
 
 
@@ -1955,6 +2304,13 @@ CHECK_OPERATIONS = {
     "ebs_snapshot_not_public": {"describe_snapshots"},
     "ecr_image_scanning": {"describe_repositories", "get_registry_scanning_configuration"},
     "ecr_tag_immutability": {"describe_repositories"},
+    "resources_outside_operating_regions": {
+        "describe_regions", "describe_instances", "describe_vpcs", "describe_security_groups",
+        "describe_db_instances", "describe_db_clusters", "describe_db_snapshots", "describe_db_cluster_snapshots",
+        "list_tables", "describe_replication_groups", "describe_cache_clusters", "list_keys", "describe_key",
+        "list_secrets", "describe_repositories", "list_topics", "describe_volumes", "describe_log_groups",
+        "list_buckets", "get_bucket_location", "describe_trails",
+    },
 }
 
 
@@ -1984,6 +2340,7 @@ _SECTION_BY_PREFIX = (
     ("resource_policy_", {"kms", "secretsmanager", "ecr", "sns"}),
     ("ebs_", {"ebs"}),
     ("ecr_", {"ecr"}),
+    ("resources_outside_", {"regions", *INVENTORY_SECTIONS}),
 )
 CHECK_SECTIONS = {check_id: next((s for p, s in _SECTION_BY_PREFIX if check_id.startswith(p)), {"ec2"})
                   for check_id in CHECK_OPERATIONS}
@@ -2015,30 +2372,20 @@ def _incomplete_checks(snapshot, check_ids, covered=None):
     return incomplete
 
 
-def run(snapshot, framework, exceptions=None, base_dir=None):
+def run(snapshot, framework, exceptions=None, base_dir=None, operating_regions=None):
     """base_dir is the exceptions file's directory; verified_values evidence
-    paths are relative to it."""
+    paths are relative to it. operating_regions is the list declared in
+    engagement-info.md (parse_operating_regions), or None."""
     exceptions, attestation_warnings = _validate_root_attestation(exceptions or {})
     collected_snapshot = snapshot
     snapshot, verified, verified_warnings = _apply_verified_values(snapshot, exceptions, base_dir)
     findings = []
     checks_evaluated = []
     checks_skipped = []
+    skipped_reasons = {}
+    lookup, defaults = _region_lookup(snapshot)
 
-    for check_id, meta in CHECKS_META.items():
-        if framework != "all" and framework not in meta["refs"]:
-            continue
-        func = CHECK_FUNCS[check_id]
-        # Only the handful of checks that actually use --exceptions declare
-        # the parameter; everything else keeps its original one-arg signature.
-        if "exceptions" in inspect.signature(func).parameters:
-            results = func(snapshot, exceptions=exceptions)
-        else:
-            results = func(snapshot)
-        if results is None:
-            checks_skipped.append(check_id)
-            continue
-        checks_evaluated.append(check_id)
+    def add_findings(check_id, meta, results):
         for r in results:
             findings.append({
                 "check_id": check_id,
@@ -2051,9 +2398,44 @@ def run(snapshot, framework, exceptions=None, base_dir=None):
                 "remediation": meta["remediation"],
                 "refs": meta["refs"] if framework == "all" else {framework: meta["refs"].get(framework)},
                 "resource": r["resource"],
+                # None for a global resource (an IAM user, the account).
+                "region": _finding_region(r["resource"], r.get("region"), lookup),
                 "status": r["status"],
                 "evidence": r["evidence"],
+                **({"resources": r["resources"]} if "resources" in r else {}),
             })
+
+    selected = {c: m for c, m in CHECKS_META.items() if framework == "all" or framework in m["refs"]}
+    for check_id, meta in selected.items():
+        if check_id in POST_CHECKS:
+            continue
+        func = CHECK_FUNCS[check_id]
+        # Only the handful of checks that actually use --exceptions declare
+        # the parameter; everything else keeps its original one-arg signature.
+        if "exceptions" in inspect.signature(func).parameters:
+            results = func(snapshot, exceptions=exceptions)
+        else:
+            results = func(snapshot)
+        if results is None:
+            checks_skipped.append(check_id)
+            continue
+        checks_evaluated.append(check_id)
+        add_findings(check_id, meta, results)
+
+    inventory = _region_inventory(snapshot)
+    denied, scp_note, scp_warnings = _region_deny_scp(exceptions, operating_regions)
+    _apply_operating_regions(findings, operating_regions, denied, scp_note, inventory, defaults)
+
+    check_id = "resources_outside_operating_regions"
+    if check_id in selected:
+        results = check_resources_outside_operating_regions(snapshot, operating_regions, findings, inventory)
+        if results is None:
+            checks_skipped.append(check_id)
+            if inventory is not None and not operating_regions:
+                skipped_reasons[check_id] = "no Operating Regions are declared in engagement-info.md"
+        else:
+            checks_evaluated.append(check_id)
+            add_findings(check_id, selected[check_id], results)
 
     for f in findings:
         entry = verified.get(f["check_id"], {}).get(f["resource"])
@@ -2065,10 +2447,14 @@ def run(snapshot, framework, exceptions=None, base_dir=None):
                 f"SHA-256 {entry['sha256']})."
             )
 
-    exceptions_warnings = (attestation_warnings + verified_warnings
+    exceptions_warnings = (attestation_warnings + verified_warnings + scp_warnings
                            + _apply_accepted_findings(findings, exceptions, snapshot))
 
+    region_warnings, region_incomplete = _region_warnings(snapshot, operating_regions)
     incomplete = _incomplete_checks(collected_snapshot, checks_evaluated, verified)
+    for c, reasons in region_incomplete.items():
+        if c in checks_evaluated:
+            incomplete[c] = incomplete.get(c, []) + reasons
     for f in findings:
         if f["check_id"] in incomplete:
             f["collection_incomplete"] = True
@@ -2096,6 +2482,17 @@ def run(snapshot, framework, exceptions=None, base_dir=None):
         "by_severity": by_severity,
         "checks_evaluated": checks_evaluated,
         "checks_skipped": checks_skipped,
+        # Why a check was skipped, when the reason isn't missing data.
+        "checks_skipped_reasons": skipped_reasons,
+        # None: no Operating Regions declared, so every collected region was
+        # treated as operating.
+        "operating_regions": operating_regions,
+        "regions_collected": snapshot.get("regions"),
+        "enabled_regions": snapshot.get("enabled_regions"),
+        "region_deny_scp": ({"denied_regions": "all non-operating" if denied == "all" else sorted(denied),
+                             "note": scp_note} if scp_note else None),
+        "region_warnings": region_warnings,
+        "advisory_findings": sum(1 for f in findings if f.get("advisory")),
         # False: the snapshot predates collection_errors, so a failed call
         # can't be told from an empty result.
         "collection_errors_recorded": "collection_errors" in snapshot,
@@ -2137,6 +2534,9 @@ def main():
     parser.add_argument("snapshot", help="path to the snapshot JSON produced by collect_aws_data.py")
     parser.add_argument("--framework", choices=sorted(FRAMEWORK_KEYS | {"all"}), default="cis")
     parser.add_argument("--exceptions", help="path to an exceptions JSON file - see references/exceptions-and-exclusions.md")
+    parser.add_argument("--engagement-info",
+                        help="engagement-info.md, read for its Operating Regions (default: next to the snapshot, "
+                             "if present)")
     parser.add_argument("-o", "--output", default="findings.json")
     args = parser.parse_args()
 
@@ -2145,8 +2545,15 @@ def main():
 
     exceptions = load_exceptions(args.exceptions)
 
+    info_path = args.engagement_info or os.path.join(os.path.dirname(os.path.abspath(args.snapshot)),
+                                                     "engagement-info.md")
+    if args.engagement_info and not os.path.exists(args.engagement_info):
+        parser.error(f"--engagement-info {args.engagement_info} not found")
+    operating_regions, parse_warnings = parse_operating_regions(info_path)
+
     base_dir = os.path.dirname(os.path.abspath(args.exceptions)) if args.exceptions else None
-    result = run(snapshot, args.framework, exceptions, base_dir)
+    result = run(snapshot, args.framework, exceptions, base_dir, operating_regions)
+    result["summary"]["region_warnings"] = parse_warnings + result["summary"]["region_warnings"]
 
     with open(args.output, "w") as f:
         json.dump(result, f, indent=2, default=str)
@@ -2156,7 +2563,10 @@ def main():
     print(
         f"{result['summary']['failed']} failed / {result['summary']['passed']} passed{accepted_suffix} "
         f"({len(result['summary']['checks_evaluated'])} checks evaluated, "
-        f"{len(result['summary']['checks_skipped'])} skipped for missing data, "
+        f"{len(result['summary']['checks_skipped']) - len(result['summary']['checks_skipped_reasons'])} "
+        f"skipped for missing data, "
+        + (f"{len(result['summary']['checks_skipped_reasons'])} skipped for another reason, "
+           if result['summary']['checks_skipped_reasons'] else "") +
         f"{len(result['summary']['checks_incomplete'])} incomplete because of collection errors). "
         f"Wrote {args.output}",
         file=sys.stderr,
@@ -2167,6 +2577,15 @@ def main():
         print("NOTE: this snapshot has no collection_errors (collected before the collector recorded them), "
               "so a failed API call can't be told from an empty result. Collect again to rule that out.",
               file=sys.stderr)
+    s = result["summary"]
+    if s["operating_regions"]:
+        print(f"Operating regions: {', '.join(s['operating_regions'])} (from {info_path}); "
+              f"{s['advisory_findings']} advisory finding(s) outside them.", file=sys.stderr)
+    else:
+        print("NOTE: no Operating Regions declared in engagement-info.md, so every collected region is treated "
+              "as operating and resources_outside_operating_regions is skipped.", file=sys.stderr)
+    for w in s["region_warnings"]:
+        print(f"WARNING: {w}", file=sys.stderr)
     for w in result["summary"]["exceptions_warnings"]:
         print(f"WARNING: {w}", file=sys.stderr)
     for w in version_warnings(result["summary"]):

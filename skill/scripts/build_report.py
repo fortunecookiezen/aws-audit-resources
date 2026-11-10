@@ -56,7 +56,8 @@ except ImportError:
     sys.exit(1)
 
 
-from run_checks import CHECKS_META
+from run_checks import CHECKS_META, REGION_LEVEL_CHECKS, _region_inventory, parse_operating_regions
+from remediation_tracker import REGION_CHECK, write_tracker
 from tool_version import tool_version, version_problem
 
 SKILL_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -71,7 +72,8 @@ FRAMEWORK_NAMES = {
 }
 FRAMEWORK_SHORT = {"cis": "CIS", "well_architected": "Well-Architected", "soc2": "SOC 2", "iso27001": "ISO 27001"}
 AREA_ORDER = ["IAM", "MFA", "S3", "CloudTrail / Logging", "Security Groups / VPC", "Root Account",
-              "Detection & Monitoring", "Databases", "Encryption & Secrets", "Containers"]
+              "Detection & Monitoring", "Databases", "Encryption & Secrets", "Containers",
+              "Regional Footprint"]
 SEVERITY_ORDER = ["Critical", "High", "Medium", "Low"]
 OUT_OF_SCOPE = (
     "Load balancers, CloudFront, API Gateway, WAF, ACM, Lambda, Cognito, ECS/EKS workloads, "
@@ -82,6 +84,7 @@ OUT_OF_SCOPE = (
 METADATA_KEYS = [
     "Report Status", "Report Variant Note", "Auditor Name", "Auditor Title",
     "Auditor Organization", "Auditor Contact", "Account/Engagement Owner", "Primary Contact",
+    "Operating Regions",
 ]
 REQUIRED_MILESTONES = ["Test Start", "Test Completion", "Findings Draft", "Findings Review", "Findings Completion"]
 NOT_PROVIDED = "Not provided"
@@ -325,11 +328,24 @@ def area_check_counts(ctx):
     return {area: tuple(n) for area, n in counts.items()}
 
 
+def area_skip_reason(ctx, area):
+    """The reason every skipped check in `area` gives (from run_checks'
+    checks_skipped_reasons), or None if any was skipped for missing data."""
+    reasons = ctx["summary"].get("checks_skipped_reasons") or {}
+    skipped = [c for c in ctx["summary"].get("checks_skipped") or []
+               if CHECKS_META.get(c, {}).get("area") == area]
+    if skipped and all(c in reasons for c in skipped):
+        return "; ".join(sorted({reasons[c] for c in skipped}))
+    return None
+
+
 def split_areas(ctx):
-    """(areas with at least one evaluated check, areas with none)."""
+    """(areas with at least one evaluated check, areas not evaluated for lack
+    of data, {area: reason} for areas not evaluated for another reason)."""
     counts = area_check_counts(ctx)
     evaluated = [a for a, (n_eval, _) in counts.items() if n_eval]
-    return evaluated, [a for a in counts if a not in evaluated]
+    other = {a: area_skip_reason(ctx, a) for a in counts if a not in evaluated and area_skip_reason(ctx, a)}
+    return evaluated, [a for a in counts if a not in evaluated and a not in other], other
 
 
 def group_by_check(findings):
@@ -421,32 +437,54 @@ def build_executive_summary(doc, ctx):
         )
     else:
         posture = "No critical or high-severity findings were identified; the remaining findings are medium or low severity."
-    evaluated_areas, unevaluated_areas = split_areas(ctx)
-    total = len(evaluated_areas) + len(unevaluated_areas)
-    if not unevaluated_areas:
+    evaluated_areas, missing_data_areas, other_areas = split_areas(ctx)
+    total = len(evaluated_areas) + len(missing_data_areas) + len(other_areas)
+    if not missing_data_areas and not other_areas:
         coverage = f"across {total} areas: {', '.join(evaluated_areas)}."
     elif not evaluated_areas:
-        coverage = (f"but none of the {total} areas could be evaluated, because the snapshot lacked the "
-                    "data their checks need.")
+        coverage = f"but none of the {total} areas could be evaluated."
     else:
-        coverage = (
-            f"across {len(evaluated_areas)} of {total} areas ({', '.join(evaluated_areas)}). "
-            f"{len(unevaluated_areas)} area(s) could not be evaluated because the snapshot lacked the data "
-            f"their checks need, and have no results in this report: {', '.join(unevaluated_areas)}."
-        )
+        coverage = f"across {len(evaluated_areas)} of {total} areas ({', '.join(evaluated_areas)})."
+    if missing_data_areas:
+        coverage += (f" {len(missing_data_areas)} area(s) could not be evaluated because the snapshot lacked the "
+                     f"data their checks need, and have no results in this report: {', '.join(missing_data_areas)}.")
+    for area, reason in other_areas.items():
+        coverage += f" {area} was not evaluated: {reason}."
     collected = (f"Data was collected {ctx['collected_at']}." if ctx["collected_known"]
                  else "The snapshot does not record when its data was collected.")
     doc.add_paragraph(
         f"This report covers AWS account {s.get('account_id') or 'Unknown'}, evaluated against the "
         f"{FRAMEWORK_NAMES.get(ctx['framework'], ctx['framework'])} {coverage} {collected} {posture}"
     )
+    operating = s.get("operating_regions")
+    if operating:
+        doc.add_paragraph(
+            f"The client operates in {', '.join(operating)}. Region-level controls (detection services, EBS "
+            "encryption by default) and AWS-created defaults that fail outside these regions are reported as "
+            f"Low-severity advisories ({s.get('advisory_findings', 0)} in this report), and anything found "
+            "outside them is reported under Regional Footprint whether or not it is otherwise compliant."
+        )
+    elif "operating_regions" in s:
+        doc.add_paragraph(
+            "No operating regions were declared for this engagement, so every collected region was treated as "
+            "one the client operates in."
+        )
     rows = [("Failed findings", s.get("failed", 0))]
     rows += [(f"    {sev}", by_sev.get(sev, 0)) for sev in SEVERITY_ORDER]
     rows += [
         ("Passed findings", s.get("passed", 0)),
         ("Accepted findings", s.get("accepted", 0)),
+    ]
+    if s.get("operating_regions"):
+        rows.append(("Advisory findings outside operating regions (counted in Low)", s.get("advisory_findings", 0)))
+    reasons = s.get("checks_skipped_reasons") or {}
+    rows += [
         ("Checks evaluated", len(s.get("checks_evaluated") or [])),
-        ("Checks skipped (missing data)", len(s.get("checks_skipped") or [])),
+        ("Checks skipped (missing data)", len(s.get("checks_skipped") or []) - len(reasons)),
+    ]
+    if reasons:
+        rows.append(("Checks skipped (other reasons)", len(reasons)))
+    rows += [
         ("Checks incomplete (collection errors)", len(s.get("checks_incomplete") or {})),
     ]
     add_table(doc, ["Measure", "Count"], rows, [3.5, 1.5], font_size=10)
@@ -539,7 +577,10 @@ def build_detailed(doc, ctx, number):
             "(see Appendix: Scope & Methodology)."
         )
         if not area_failed:
-            if n_eval == 0 and n_skip:
+            reason = area_skip_reason(ctx, area) if n_eval == 0 else None
+            if reason:
+                doc.add_paragraph(f"Not evaluated: {reason}.")
+            elif n_eval == 0 and n_skip:
                 doc.add_paragraph(
                     f"Not evaluated: the snapshot had no data for this area's {n_skip} check(s), so none of its "
                     "controls were tested. This is not a passing result (see Appendix: Scope & Methodology)."
@@ -555,13 +596,18 @@ def build_detailed(doc, ctx, number):
             doc.add_paragraph(skip_note)
         grouped = group_by_check(area_failed)
         for check_id in sorted(grouped, key=lambda c: (min(severity_key(f["severity"]) for f in grouped[c]), c)):
-            fs = sorted(grouped[check_id], key=lambda f: severity_key(f["severity"]))
-            f0 = fs[0]
+            ordered = sorted(grouped[check_id], key=lambda f: severity_key(f["severity"]))
+            # Advisories (outside the operating regions) are listed in one
+            # line after the real findings rather than a row each.
+            fs = [f for f in ordered if not f.get("advisory")]
+            advisories = [f for f in ordered if f.get("advisory")]
+            f0 = (fs or advisories)[0]
             mixed = len({f["severity"] for f in fs}) > 1
             doc.add_heading(f0["title"], level=3)
             p = doc.add_paragraph()
             p.add_run("Severity: ").bold = True
-            sev = p.add_run(f0["severity"] + (" (highest; varies by resource)" if mixed else ""))
+            sev = p.add_run(f0["severity"] + (" (highest; varies by resource)" if mixed else "")
+                            + ("" if fs else " (advisory)"))
             sev.bold = True
             sev.font.color.rgb = RGBColor.from_string(SEVERITY_FILL.get(f0["severity"], "000000"))
             p.add_run("    Control: ").bold = True
@@ -571,11 +617,72 @@ def build_detailed(doc, ctx, number):
             if mixed:
                 add_table(doc, ["Resource", "Severity", "Evidence"],
                           [(f["resource"], f["severity"], f["evidence"]) for f in fs], [1.7, 0.7, 4.1])
-            else:
+            elif fs:
                 add_table(doc, ["Resource", "Evidence"], [(f["resource"], f["evidence"]) for f in fs], [1.8, 4.7])
+            if advisories:
+                ap = doc.add_paragraph()
+                ap.add_run(f"Advisory, outside the operating regions (Low, {len(advisories)}): ").bold = True
+                ap.add_run(", ".join(f["resource"] for f in advisories)
+                           + ". The client doesn't operate here, but activity in an unused region would otherwise "
+                             "go unseen; an organization SCP denying these regions, once attested, clears these.")
             rp = doc.add_paragraph()
             rp.add_run("Remediation: ").bold = True
             rp.add_run(f0["remediation"])
+
+
+def build_region_scope(doc, ctx):
+    """The Regions subsection: operating regions, what was collected, and a
+    per-region footprint table."""
+    s, findings = ctx["summary"], ctx["findings"]
+    collected = s.get("regions_collected") or (ctx["snapshot"] or {}).get("regions") or []
+    operating = s.get("operating_regions")
+    if not collected and not operating:
+        return
+    doc.add_heading("Regions", level=2)
+    if operating:
+        doc.add_paragraph(
+            f"Operating regions (declared in engagement-info.md): {', '.join(operating)}. Every enabled region "
+            "is collected so resources outside them can be found; outside them, region-level controls are "
+            "advisory and every resource is still checked at full severity."
+        )
+    elif "operating_regions" in s:
+        doc.add_paragraph("Operating regions: none declared, so every collected region was treated as operating.")
+    enabled = s.get("enabled_regions")
+    if enabled is not None:
+        uncollected = sorted(set(enabled) - set(collected))
+        doc.add_paragraph(
+            f"{len(enabled)} region(s) are enabled for the account and {len(collected)} were collected"
+            + (f"; not collected: {', '.join(uncollected)}." if uncollected else ".")
+        )
+    scp = s.get("region_deny_scp")
+    if scp:
+        add_bullet(doc, scp["note"], bold_prefix="Region-deny SCP: ")
+    for w in s.get("region_warnings") or []:
+        add_bullet(doc, w, bold_prefix="Warning: ")
+
+    inventory = _region_inventory(ctx["snapshot"]) if ctx["snapshot"] else None
+    status = {}
+    for f in findings:
+        if f["check_id"] in ("guardduty_enabled", "securityhub_enabled", "config_recorder_enabled"):
+            status[(f["check_id"], f["resource"])] = (
+                "On" if f["status"] == "pass" and not f.get("outside_operating_regions") else
+                "Off (SCP denies region)" if f["status"] == "pass" else
+                "Off (advisory)" if f.get("advisory") else
+                "Off" if f["status"] == "fail" else "Accepted")
+    rows = []
+    for region in sorted(set(collected) | set(operating or [])):
+        rows.append((
+            region,
+            "—" if not operating else ("Yes" if region in operating else "No"),
+            "Not collected" if region not in collected else
+            "—" if inventory is None else str(len(inventory.get(region) or [])),
+            *(status.get((c, region), "—") for c in ("guardduty_enabled", "securityhub_enabled",
+                                                     "config_recorder_enabled")),
+        ))
+    doc.add_paragraph("Resources counts exclude AWS-created defaults (default VPC and security group, "
+                      "AWS-managed keys, service-owned secrets).")
+    add_table(doc, ["Region", "Operating", "Resources", "GuardDuty", "Security Hub", "AWS Config"],
+              rows, [1.3, 0.8, 0.9, 1.2, 1.2, 1.1], font_size=8)
 
 
 def build_appendix(doc, ctx):
@@ -583,16 +690,21 @@ def build_appendix(doc, ctx):
     doc.add_heading("Appendix: Scope & Methodology", level=1)
 
     doc.add_heading("Scope", level=2)
-    evaluated_areas, unevaluated_areas = split_areas(ctx)
-    if unevaluated_areas:
+    evaluated_areas, missing_data_areas, other_areas = split_areas(ctx)
+    if missing_data_areas or other_areas:
         doc.add_paragraph(f"In scope and evaluated: {', '.join(evaluated_areas) or 'none'}.")
-        doc.add_paragraph(
-            f"In scope but not evaluated (the snapshot lacked the data their checks need): "
-            f"{', '.join(unevaluated_areas)}."
-        )
+        if missing_data_areas:
+            doc.add_paragraph(
+                f"In scope but not evaluated (the snapshot lacked the data their checks need): "
+                f"{', '.join(missing_data_areas)}."
+            )
+        for area, reason in other_areas.items():
+            doc.add_paragraph(f"In scope but not evaluated: {area} ({reason}).")
     else:
         doc.add_paragraph(f"In scope: {', '.join(evaluated_areas)}.")
     doc.add_paragraph(f"Out of scope for this version: {OUT_OF_SCOPE}")
+
+    build_region_scope(doc, ctx)
 
     doc.add_heading("Data source", level=2)
     snap = ctx["snapshot"] or {}
@@ -603,6 +715,9 @@ def build_appendix(doc, ctx):
     if snap.get("regions"):
         add_bullet(doc, ", ".join(snap["regions"]), bold_prefix="Regions: ")
     add_bullet(doc, os.path.basename(ctx["findings_path"]), bold_prefix="Findings file: ")
+    add_bullet(doc, f"{ctx['tracker_name']} (one row per failing or accepted finding, and per resource outside "
+                    "the operating regions; kept with this report as the record of how each was handled)",
+               bold_prefix="Remediation tracker: ")
     versions = tool_versions(ctx)
     if len(set(versions.values())) == 1:
         add_bullet(doc, f"{versions['collection']} (collection, checks and report)", bold_prefix="Tool version: ")
@@ -616,7 +731,10 @@ def build_appendix(doc, ctx):
     skipped = s.get("checks_skipped") or []
     incomplete = s.get("checks_incomplete") or {}
     doc.add_paragraph(
-        f"{len(evaluated)} automated check(s) evaluated, {len(skipped)} skipped because the snapshot lacked the data they need"
+        f"{len(evaluated)} automated check(s) evaluated, "
+        f"{len(skipped) - len(s.get('checks_skipped_reasons') or {})} skipped because the snapshot lacked the data they need"
+        + (f", {len(s['checks_skipped_reasons'])} skipped for the reason shown below"
+           if s.get("checks_skipped_reasons") else "")
         + (f", {len(incomplete)} incomplete because an API call they depend on failed during collection." if incomplete else ".")
     )
     add_table(
@@ -624,7 +742,7 @@ def build_appendix(doc, ctx):
         ["Check ID", "Title", "Result"],
         [(c, titles.get(c, "(no resources evaluated)"), "Incomplete: collection error" if c in incomplete else "Evaluated")
          for c in evaluated]
-        + [(c, "—", "Skipped: missing data") for c in skipped],
+        + [(c, "—", f"Skipped: {(s.get('checks_skipped_reasons') or {}).get(c, 'missing data')}") for c in skipped],
         [2.4, 3.1, 1.0],
         font_size=8,
     )
@@ -807,6 +925,58 @@ def output_filename(account_id, framework, label, status):
     return "_".join(parts) + ".docx"
 
 
+def tracker_filename(account_id, framework, label):
+    parts = ["AWS_Security_Audit", account_id or "unknown", framework]
+    if label:
+        parts.append(re.sub(r"[^A-Za-z0-9._-]+", "-", label))
+    return "_".join(parts) + "_remediation-tracker.csv"
+
+
+def previous_tracker(args, out_dir, tracker_path):
+    """The tracker to carry filled-in columns forward from: --previous-tracker,
+    else the output file itself, else the newest other tracker for this
+    account and framework in the output directory (the baseline's, on a
+    retest). None for the first build."""
+    if args.previous_tracker:
+        if not os.path.exists(args.previous_tracker):
+            raise ValueError(f"--previous-tracker {args.previous_tracker} not found")
+        return args.previous_tracker
+    if os.path.exists(tracker_path):
+        return None  # write_tracker merges from, and backs up, the existing file
+    prefix = os.path.basename(tracker_path).split("_remediation-tracker.csv")[0]
+    stem = "_".join(prefix.split("_")[:4])  # AWS_Security_Audit_<account>_<framework>
+    candidates = [os.path.join(out_dir, n) for n in os.listdir(out_dir)
+                  if n.startswith(stem) and n.endswith("_remediation-tracker.csv")]
+    return max(candidates, key=os.path.getmtime) if candidates else None
+
+
+def build_region_resources_appendix(doc, ctx):
+    """Appendix listing every resource outside the operating regions - the
+    full detail behind resources_outside_operating_regions, whose evidence
+    names at most 15 per region."""
+    entries = [(f, r) for f in ctx["findings"]
+               if f["check_id"] == REGION_CHECK and f["status"] in ("fail", "accepted")
+               for r in f.get("resources") or []]
+    if not entries:
+        return
+    doc.add_heading("Appendix: Resources Outside the Operating Regions", level=1)
+    doc.add_paragraph(
+        f"Every resource found outside the operating regions ({', '.join(ctx['summary'].get('operating_regions') or [])}), "
+        "AWS-created defaults excluded. Each needs an owner and a decision: delete it, migrate it, or add its "
+        "region to the operating regions. Each is also a row in the remediation tracker "
+        f"({ctx['tracker_name']}), where that decision is recorded."
+    )
+    rows = []
+    for f, r in sorted(entries, key=lambda e: (e[0]["region"], not e[1]["exposure"], e[1]["type"], e[1]["id"])):
+        rows.append((
+            f["region"], r["type"], r["id"],
+            "; ".join(r["exposure"]) or "No",
+            "; ".join(f"{x['check_id']} ({x['severity']})" for x in r["findings"]) or "—",
+        ))
+    add_table(doc, ["Region", "Type", "Resource", "Internet-exposed", "Other findings"],
+              rows, [0.9, 1.1, 1.8, 1.3, 1.5], font_size=8)
+
+
 def build(args):
     with open(args.findings) as f:
         result = json.load(f)
@@ -814,7 +984,8 @@ def build(args):
     framework = summary.get("framework") or "cis"
     engagement_dir = os.path.dirname(os.path.abspath(args.findings))
 
-    meta, milestones = parse_engagement_info(args.engagement_info or os.path.join(engagement_dir, "engagement-info.md"))
+    engagement_path = args.engagement_info or os.path.join(engagement_dir, "engagement-info.md")
+    meta, milestones = parse_engagement_info(engagement_path)
 
     snapshot_path = args.snapshot or default_snapshot_path(args.findings, summary.get("collected_at"))
     snapshot = None
@@ -844,7 +1015,11 @@ def build(args):
         "findings_path": args.findings,
         "manual_checks": parse_manual_checks(),
         "report_tool_version": tool_version(),
+        "tracker_name": tracker_filename(summary.get("account_id"), framework, args.label),
     }
+    out_dir = args.out_dir or engagement_dir
+    tracker_path = os.path.join(out_dir, ctx["tracker_name"])
+    previous = previous_tracker(args, out_dir, tracker_path)
 
     doc = setup_document(ctx)
     build_cover(doc, ctx)
@@ -856,12 +1031,30 @@ def build(args):
         number += 1
     build_passing(doc, ctx, number)
     build_detailed(doc, ctx, number + 1)
+    build_region_resources_appendix(doc, ctx)
     build_appendix(doc, ctx)
 
-    out_dir = args.out_dir or engagement_dir
     out_path = os.path.join(out_dir, output_filename(summary.get("account_id"), framework, args.label, ctx["status"]))
     doc.save(out_path)
-    return out_path, snapshot_warnings + date_warnings(ctx) + tool_version_warnings(ctx) + finalization_warnings(ctx)
+    _, counts, tracker_notes = write_tracker(result, args.findings, tracker_path, previous)
+    tracker_notes.insert(0, f"Wrote {tracker_path}: "
+                         + ", ".join(f"{n} {k.lower()}" for k, n in sorted(counts.items())) + ".")
+    return out_path, tracker_notes, (snapshot_warnings + date_warnings(ctx) + tool_version_warnings(ctx)
+                                     + finalization_warnings(ctx) + operating_regions_warnings(ctx, engagement_path))
+
+
+def operating_regions_warnings(ctx, engagement_path):
+    """Warn when engagement-info.md's Operating Regions no longer match the
+    ones run_checks.py used, e.g. edited after the checks ran."""
+    s = ctx["summary"]
+    if "operating_regions" not in s:
+        return []
+    declared, _ = parse_operating_regions(engagement_path)
+    if declared == s.get("operating_regions"):
+        return []
+    return [f"engagement-info.md declares Operating Regions {', '.join(declared or []) or '(none)'}, but the "
+            f"findings were evaluated with {', '.join(s.get('operating_regions') or []) or '(none)'}. "
+            "Run run_checks.py again so the report matches the engagement scope."]
 
 
 def main():
@@ -875,14 +1068,20 @@ def main():
     parser.add_argument("--data-source", default="Live AWS API collection via collect_aws_data.py (read-only audit role)",
                         help="how the snapshot was produced, for the methodology appendix")
     parser.add_argument("--out-dir", help="output directory (default: the findings file's directory)")
+    parser.add_argument("--previous-tracker",
+                        help="remediation tracker CSV to carry Owner, Disposition and the other filled-in "
+                             "columns forward from (default: this build's tracker if it exists, else the newest "
+                             "tracker for this account and framework in the output directory)")
     args = parser.parse_args()
 
     try:
-        out_path, warnings = build(args)
-    except BuildError as e:
+        out_path, notes, warnings = build(args)
+    except (BuildError, ValueError) as e:
         print(f"ERROR: {e}", file=sys.stderr)
         sys.exit(1)
     print(f"Wrote {out_path}", file=sys.stderr)
+    for n in notes:
+        print(n, file=sys.stderr)
     for w in warnings:
         print(f"WARNING: {w}", file=sys.stderr)
 

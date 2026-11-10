@@ -137,11 +137,19 @@ re-running with a corrected (or removed) exceptions file — see
       "sha256": "<sha256 of the evidence file>",
       "note": "aws s3api get-bucket-logging --query LoggingEnabled run in the management account 111122223333 (caller identity in the file) returned null."
     }
-  ]
+  ],
+  "region_deny_scp": {
+    "attested": true,
+    "attested_by": "jamesp",
+    "attested_date": "2026-10-14",
+    "policy_id": "p-examplescp1",
+    "denied_regions": "all_non_operating",
+    "note": "aws organizations describe-policy --policy-id p-examplescp1 run in the management account: denies all actions when aws:RequestedRegion is not us-east-1 or us-east-2, exempting global services; attached to the OU containing this account. See evidence/region-deny-scp-20261014.json."
+  }
 }
 ```
 
-All five top-level keys are optional — include only what applies to this
+All six top-level keys are optional — include only what applies to this
 account. An auto-detected `root_credentials_management_enabled: true` in the
 snapshot takes precedence over `root_credentials_centrally_managed` here, so
 you don't need this block at all when the collector could confirm it itself.
@@ -156,6 +164,23 @@ you don't need this block at all when the collector could confirm it itself.
   in `note` along with the evidence it rests on. All three are carried
   verbatim into the finding's evidence so the report shows who made the call
   and why.
+- **`region_deny_scp`** — an organization SCP that denies the regions the
+  client doesn't operate in. Only meaningful when `engagement-info.md`
+  declares Operating Regions: outside them, region-level controls (GuardDuty,
+  Security Hub, Inspector, Access Analyzer, Config, EBS encryption by default)
+  and the AWS-created default VPC and security groups are Low advisories, and
+  this attestation turns those advisories into passes for the regions it
+  covers. A member account's audit role can't read SCPs, so confirm the policy
+  from the management account (`aws organizations describe-policy` and
+  `list-targets-for-policy`) and keep that output under `evidence/`.
+  `denied_regions` is `"all_non_operating"` or a list of region names;
+  `attested_by`, `attested_date` (`YYYY-MM-DD`), `policy_id` and `note` are
+  required, or it isn't applied and `run_checks.py` prints a `WARNING:`. Like
+  the root attestation, it's corroborated against the collected data: in a
+  region where `resources_outside_operating_regions` found resources, the SCP
+  evidently doesn't stop them (they may predate it), so that region's
+  advisories stay and their evidence says why. The attestation never affects
+  `resources_outside_operating_regions` itself.
 - **`root_routine_use_window_days`** — integer; default `365`. Root activity
   (password sign-in or access-key use) older than this is not treated as
   "routine use." Lower it (e.g. `180`) for a stricter review, or if your audit
@@ -246,7 +271,9 @@ directory) becomes `exceptions.json`:
 | §3 each admin role/user row | One `accepted_admin_principals` entry. Name or pattern → `pattern` (anchor exact names with `^...$`; use a prefix pattern such as `^AWSReservedSSO_AdministratorAccess_` for AWS-generated suffixes). Purpose / justification, Evidence, owner/approver, and last-reviewed → `note`. A row with no evidence isn't transcribed until the owner supplies it. For `OrganizationAccountAccessRole`, `stacksets-exec-<hash>` and `AWSReservedSSO_<name>_<hash>` roles, the evidence is `collect_admin_role_evidence.sh` output from both the member and management accounts, checked as described in `accepting-findings-process.md`. Matching is by name only, so a prefix like `^stacksets-exec-` would also accept a hand-made role with that prefix: when an account has a single such role, prefer its exact name (`^stacksets-exec-<hash>$`), which fails visibly if the role is recreated, over a prefix that has to be re-checked against trust policies on every re-audit. Every row of the category checklist below the table must be answered; a blank row is a question to send back, not a "None." |
 | §4 "None" | Nothing to transcribe. A §4 left entirely blank is a question to send back, not a "None." |
 | §4 each other accepted-risk row | One `accepted_findings` entry. The auditor fills in **Check ID** and the resource pattern from `findings.json` / `check-catalog.md`; Current state, then Compensating control or justification → `note` (e.g. "MFA Delete disabled; versioning enabled. Object Lock …"), after checking the stated state against `findings.json` — if a matched resource is in a worse state than described, leave it out of the rule; Owner / approver → `approved_by`; Approval date → `approved_date`; Review-by date → `review_by`. A row about a root or admin-policy finding belongs in §2 or §3 instead. A row with no review-by date, or for a risk nobody can explain, isn't transcribed — see "What not to accept." |
-| §1, §5, §6 (engagement info, contacts, sign-off) | Not transcribed. Contacts and dates belong in `engagement-info.md`; the sign-off stays in the saved response as the record of who approved the entries above. |
+| §1 regions you operate in | Not `exceptions.json`: copy to `Operating Regions` in `engagement-info.md`. |
+| §1 region-deny SCP = **Yes**, *and* the attached `describe-policy` / `list-targets-for-policy` output shows a deny on `aws:RequestedRegion` that covers this account | `region_deny_scp`: `attested: true`; `policy_id` from the output; `denied_regions` = `"all_non_operating"` when the policy allows only the operating regions, else the list it denies; `attested_by` and `attested_date` = who ran those commands and when; `note` citing the evidence file. A policy that exempts this account's OU, or allows more regions than the declared operating ones, is a question to send back, not an attestation. |
+| §1 (other fields), §5, §6 (engagement info, contacts, sign-off) | Not transcribed. Contacts and dates belong in `engagement-info.md`; the sign-off stays in the saved response as the record of who approved the entries above. |
 
 Check every row against "What not to accept" in
 `accepting-findings-process.md` before transcribing it — a response row is a
