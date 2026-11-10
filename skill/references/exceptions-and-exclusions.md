@@ -168,7 +168,7 @@ you don't need this block at all when the collector could confirm it itself.
   client doesn't operate in. Only meaningful when `engagement-info.md`
   declares Operating Regions: outside them, region-level controls (GuardDuty,
   Security Hub, Inspector, Access Analyzer, Config, EBS encryption by default)
-  and the AWS-created default VPC and security groups are Low advisories, and
+  and the AWS-created default VPC and security groups are Informational advisories, and
   this attestation turns those advisories into passes for the regions it
   covers. A member account's audit role can't read SCPs, so confirm the policy
   from the management account (`aws organizations describe-policy` and

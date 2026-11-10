@@ -74,7 +74,7 @@ FRAMEWORK_SHORT = {"cis": "CIS", "well_architected": "Well-Architected", "soc2":
 AREA_ORDER = ["IAM", "MFA", "S3", "CloudTrail / Logging", "Security Groups / VPC", "Root Account",
               "Detection & Monitoring", "Databases", "Encryption & Secrets", "Containers",
               "Regional Footprint"]
-SEVERITY_ORDER = ["Critical", "High", "Medium", "Low"]
+SEVERITY_ORDER = ["Critical", "High", "Medium", "Low", "Informational"]
 OUT_OF_SCOPE = (
     "Load balancers, CloudFront, API Gateway, WAF, ACM, Lambda, Cognito, ECS/EKS workloads, "
     "Elastic Beanstalk, CI/CD services (CodeBuild, CodePipeline, CodeCommit), Systems Manager, "
@@ -93,7 +93,7 @@ PENDING = "Pending"
 # Colors
 DRAFT_FILL, FINAL_FILL = "C00000", "2E7D32"
 HEADER_FILL = "1F3864"
-SEVERITY_FILL = {"Critical": "C00000", "High": "E36C09", "Medium": "BF8F00", "Low": "548235"}
+SEVERITY_FILL = {"Critical": "C00000", "High": "E36C09", "Medium": "BF8F00", "Low": "548235", "Informational": "7F7F7F"}
 LIGHT_FILL = "F2F2F2"
 
 
@@ -383,6 +383,7 @@ def build_cover(doc, ctx):
         ("Report Status", status),
         ("AWS Account ID", s.get("account_id") or "Unknown"),
         ("Framework", FRAMEWORK_NAMES.get(ctx["framework"], ctx["framework"])),
+        *([("Audit Result", s["audit_result"]["result"])] if s.get("audit_result") else []),
         ("Data Collected", ctx["collected_at"]),
         ("Report Generated", ctx["generated_at"]),
         ("Account/Engagement Owner", meta.get("Account/Engagement Owner") or NOT_PROVIDED),
@@ -395,9 +396,11 @@ def build_cover(doc, ctx):
         cells = table.add_row().cells
         set_cell_text(cells[0], label, bold=True, size=10)
         shade_cell(cells[0], LIGHT_FILL)
-        run = set_cell_text(cells[1], value, size=10, bold=(label == "Report Status"))
+        run = set_cell_text(cells[1], value, size=10, bold=(label in ("Report Status", "Audit Result")))
         if label == "Report Status":
             run.font.color.rgb = RGBColor.from_string(DRAFT_FILL if status == "DRAFT" else FINAL_FILL)
+        if label == "Audit Result":
+            run.font.color.rgb = RGBColor.from_string(PASS_FILL if value == "PASS" else NOT_PASSING_FILL)
     for row in table.rows:
         row.cells[0].width, row.cells[1].width = Inches(2.2), Inches(4.3)
     doc.add_paragraph()
@@ -456,12 +459,13 @@ def build_executive_summary(doc, ctx):
         f"This report covers AWS account {s.get('account_id') or 'Unknown'}, evaluated against the "
         f"{FRAMEWORK_NAMES.get(ctx['framework'], ctx['framework'])} {coverage} {collected} {posture}"
     )
+    add_audit_result(doc, ctx)
     operating = s.get("operating_regions")
     if operating:
         doc.add_paragraph(
             f"The client operates in {', '.join(operating)}. Region-level controls (detection services, EBS "
             "encryption by default) and AWS-created defaults that fail outside these regions are reported as "
-            f"Low-severity advisories ({s.get('advisory_findings', 0)} in this report), and anything found "
+            f"Informational advisories ({s.get('advisory_findings', 0)} in this report), and anything found "
             "outside them is reported under Regional Footprint whether or not it is otherwise compliant."
         )
     elif "operating_regions" in s:
@@ -476,7 +480,7 @@ def build_executive_summary(doc, ctx):
         ("Accepted findings", s.get("accepted", 0)),
     ]
     if s.get("operating_regions"):
-        rows.append(("Advisory findings outside operating regions (counted in Low)", s.get("advisory_findings", 0)))
+        rows.append(("Advisory findings outside operating regions (counted in Informational)", s.get("advisory_findings", 0)))
     reasons = s.get("checks_skipped_reasons") or {}
     rows += [
         ("Checks evaluated", len(s.get("checks_evaluated") or [])),
@@ -488,6 +492,153 @@ def build_executive_summary(doc, ctx):
         ("Checks incomplete (collection errors)", len(s.get("checks_incomplete") or {})),
     ]
     add_table(doc, ["Measure", "Count"], rows, [3.5, 1.5], font_size=10)
+
+
+PASS_FILL, NOT_PASSING_FILL = "2E7D32", "C00000"
+
+
+def criteria_text(ar):
+    """The pass standard in words, from a findings file's audit_result."""
+    must = ar["must_remediate"]
+    text = f"{', '.join(must[:-1]) + ' and ' + must[-1] if len(must) > 1 else must[0]} findings must be remediated"
+    lower = [s for s in ("Critical", "High", "Medium", "Low") if s not in must]
+    if lower:
+        text += f" and verified by retest; {' and '.join(lower)} findings must be remediated or risk-accepted"
+    else:
+        text += " and verified by retest"
+    return (text + "; every applicable check must be evaluated completely. Informational findings don't affect "
+            "the result and are communicated to management.")
+
+
+def add_audit_result(doc, ctx):
+    """The audit result block in the executive summary: the verdict, the
+    standard it was measured against, and what blocks a pass."""
+    ar = ctx["summary"].get("audit_result")
+    if not ar:
+        return
+    p = doc.add_paragraph()
+    p.add_run("Audit result: ").bold = True
+    r = p.add_run(ar["result"])
+    r.bold = True
+    r.font.color.rgb = RGBColor.from_string(PASS_FILL if ar["result"] == "PASS" else NOT_PASSING_FILL)
+    doc.add_paragraph(f"Pass standard: {criteria_text(ar)}")
+    if ar["blocking"]:
+        doc.add_paragraph("What stands between this account and a pass:")
+        add_table(doc, ["Blocking item", "Count"],
+                  [(k[0].upper() + k[1:], n) for k, n in sorted(
+                      ar["blocking_counts"].items(), key=lambda kv: (severity_key(kv[0].split(" ")[0]), kv[0]))],
+                  [5.0, 1.0], font_size=9)
+        doc.add_paragraph("Each open finding is a row in the remediation tracker; an unevaluated or incomplete "
+                          "check needs the missing data collected and the checks run again.")
+    if ar.get("communicated_to_management"):
+        doc.add_paragraph(f"{ar['communicated_to_management']} accepted or informational item(s) are listed under "
+                          "Matters Communicated to Management and in the management letter.")
+
+
+def build_management_matters(doc, ctx, number):
+    """Accepted Lows, expected administrators and Informational findings:
+    what management is told about rather than asked to fix."""
+    m = management_matters(ctx)
+    if not any(m.values()):
+        return False
+    doc.add_heading(f"{number}. Matters Communicated to Management", level=1)
+    doc.add_paragraph(
+        "These items don't prevent a passing result, but management should know about them: risks it has "
+        "accepted instead of fixing, administrator access that exists by design, and informational findings. "
+        f"The same items are in the management letter ({ctx['letter_name']}) for sign-off."
+    )
+    add_management_tables(doc, m)
+    return True
+
+
+def management_matters(ctx):
+    findings = [f for f in ctx["findings"] if f["status"] != "pass"]
+    must = (ctx["summary"].get("audit_result") or {}).get("must_remediate", ["Critical", "High", "Medium"])
+    kind = lambda f: (f.get("acceptance") or {}).get("kind")
+    return {
+        "accepted": [f for f in findings if f["status"] == "accepted" and f["severity"] not in must
+                     and kind(f) != "expected_admin_principal"],
+        "expected_admins": [f for f in findings if kind(f) == "expected_admin_principal"],
+        "informational": [f for f in findings if f["severity"] == "Informational" and f["status"] == "fail"],
+    }
+
+
+def add_management_tables(doc, m):
+    if m["accepted"]:
+        doc.add_heading("Risk-accepted findings", level=2)
+        add_table(doc, ["Finding", "Resource", "Severity", "Approved by", "Approved", "Review by", "Reason"],
+                  [(f["title"], str(f["resource"]), f["severity"], *(
+                      (f.get("acceptance") or {}).get(k, "") for k in ("approved_by", "approved_date", "review_by")),
+                    shorten_hashes((f.get("acceptance") or {}).get("note", ""))) for f in
+                   sorted(m["accepted"], key=lambda f: (severity_key(f["severity"]), f["check_id"]))],
+                  [1.2, 1.1, 0.6, 0.9, 0.7, 0.7, 1.3], font_size=7)
+    if m["expected_admins"]:
+        doc.add_heading("Administrator access by design", level=2)
+        doc.add_paragraph("Principals with full administrator access that the engagement's exceptions file "
+                          "documents as intended (accepted_admin_principals). They are reviewed, not remediated.")
+        add_table(doc, ["Principal and policy", "Reason"],
+                  [(str(f["resource"]), shorten_hashes((f.get("acceptance") or {}).get("note", "")))
+                   for f in sorted(m["expected_admins"], key=lambda f: str(f["resource"]))], [3.0, 3.5], font_size=8)
+    if m["informational"]:
+        doc.add_heading("Informational findings", level=2)
+        doc.add_paragraph("Advisories outside the operating regions, and Low findings with no control in the "
+                          "audited framework.")
+        rows = []
+        for fs in group_by_check(sorted(m["informational"], key=lambda f: f["check_id"])).values():
+            names = [str(f["resource"]) for f in fs]
+            rows.append((fs[0]["title"], len(fs),
+                         ", ".join(names[:10]) + (f", and {len(names) - 10} more" if len(names) > 10 else ""),
+                         "Advisory outside the operating regions" if fs[0].get("advisory") else
+                         "No control in the audited framework"))
+        add_table(doc, ["Finding", "Count", "Resources", "Why informational"], rows, [1.8, 0.5, 2.8, 1.4],
+                  font_size=8)
+
+
+def letter_filename(account_id, framework, label, status):
+    return output_filename(account_id, framework, label, status).replace(
+        f"_{status}.docx", f"_management-letter_{status}.docx")
+
+
+def build_management_letter(ctx, out_path):
+    """A short letter to the account owner: the audit result, and the
+    accepted and informational items management is asked to acknowledge."""
+    s, meta, ar = ctx["summary"], ctx["meta"], ctx["summary"].get("audit_result") or {}
+    doc = setup_document(ctx)
+    doc.core_properties.title = f"AWS Security Audit Management Letter ({ctx['status']})"
+    if ctx["status"] == "DRAFT":
+        banner(doc, "DRAFT — NOT FOR DISTRIBUTION AS A FINAL LETTER", DRAFT_FILL)
+    doc.add_paragraph(ctx["generated_at"][:10])
+    doc.add_paragraph(f"To: {meta.get('Account/Engagement Owner') or NOT_PROVIDED}")
+    doc.add_paragraph(f"From: {meta.get('Auditor Name') or NOT_PROVIDED}, "
+                      f"{meta.get('Auditor Organization') or NOT_PROVIDED}")
+    doc.add_paragraph(f"Subject: AWS security audit of account {s.get('account_id') or 'Unknown'} — matters "
+                      "communicated to management")
+    framework = FRAMEWORK_NAMES.get(ctx["framework"], ctx["framework"])
+    p = doc.add_paragraph(f"We audited AWS account {s.get('account_id') or 'Unknown'} against the {framework}, "
+                          f"using data collected {ctx['collected_at']}. The audit result is ")
+    r = p.add_run(ar.get("result", "not recorded"))
+    r.bold = True
+    if ar:
+        p.add_run(f". The pass standard: {criteria_text(ar)}")
+        if ar.get("blocking"):
+            doc.add_paragraph(f"{len(ar['blocking'])} item(s) must still be resolved before the audit can pass; "
+                              f"they are listed in the audit report and the remediation tracker ({ctx['tracker_name']}).")
+    doc.add_paragraph(
+        "This letter lists the matters below because, although they don't prevent a passing result, management "
+        "should be aware of them and accept responsibility for them: findings management has risk-accepted "
+        "instead of remediating, administrator access that exists by design, and informational findings. "
+        "Accepted risks should be reviewed by the date shown."
+    )
+    m = management_matters(ctx)
+    if any(m.values()):
+        add_management_tables(doc, m)
+    else:
+        doc.add_paragraph("There are no accepted, by-design or informational items to report.")
+    doc.add_heading("Acknowledgement", level=2)
+    doc.add_paragraph("I have read the matters above and acknowledge them on behalf of management.")
+    for label in ("Name", "Title", "Signature", "Date"):
+        doc.add_paragraph(f"{label}: " + "_" * 40)
+    doc.save(out_path)
 
 
 def build_key_findings(doc, ctx):
@@ -614,6 +765,12 @@ def build_detailed(doc, ctx, number):
             p.add_run(refs_text(f0, ctx["framework"]))
             p.add_run("    Check ID: ").bold = True
             p.add_run(check_id)
+            if f0.get("outside_framework") and f0["severity"] != "Informational":
+                doc.add_paragraph(
+                    f"Outside {FRAMEWORK_SHORT.get(ctx['framework'], 'the audited framework')}: no control in the "
+                    "audited framework covers this, but it's a security risk at this severity, so it's reported "
+                    "and counts toward the audit result."
+                ).runs[0].italic = True
             if mixed:
                 add_table(doc, ["Resource", "Severity", "Evidence"],
                           [(f["resource"], f["severity"], f["evidence"]) for f in fs], [1.7, 0.7, 4.1])
@@ -621,7 +778,7 @@ def build_detailed(doc, ctx, number):
                 add_table(doc, ["Resource", "Evidence"], [(f["resource"], f["evidence"]) for f in fs], [1.8, 4.7])
             if advisories:
                 ap = doc.add_paragraph()
-                ap.add_run(f"Advisory, outside the operating regions (Low, {len(advisories)}): ").bold = True
+                ap.add_run(f"Advisory, outside the operating regions (Informational, {len(advisories)}): ").bold = True
                 ap.add_run(", ".join(f["resource"] for f in advisories)
                            + ". The client doesn't operate here, but activity in an unused region would otherwise "
                              "go unseen; an organization SCP denying these regions, once attested, clears these.")
@@ -1016,6 +1173,7 @@ def build(args):
         "manual_checks": parse_manual_checks(),
         "report_tool_version": tool_version(),
         "tracker_name": tracker_filename(summary.get("account_id"), framework, args.label),
+        "letter_name": letter_filename(summary.get("account_id"), framework, args.label, meta["Report Status"]),
     }
     out_dir = args.out_dir or engagement_dir
     tracker_path = os.path.join(out_dir, ctx["tracker_name"])
@@ -1031,6 +1189,7 @@ def build(args):
         number += 1
     build_passing(doc, ctx, number)
     build_detailed(doc, ctx, number + 1)
+    build_management_matters(doc, ctx, number + 2)
     build_region_resources_appendix(doc, ctx)
     build_appendix(doc, ctx)
 
@@ -1039,6 +1198,9 @@ def build(args):
     _, counts, tracker_notes = write_tracker(result, args.findings, tracker_path, previous)
     tracker_notes.insert(0, f"Wrote {tracker_path}: "
                          + ", ".join(f"{n} {k.lower()}" for k, n in sorted(counts.items())) + ".")
+    letter_path = os.path.join(out_dir, ctx["letter_name"])
+    build_management_letter(ctx, letter_path)
+    tracker_notes.insert(1, f"Wrote {letter_path}.")
     return out_path, tracker_notes, (snapshot_warnings + date_warnings(ctx) + tool_version_warnings(ctx)
                                      + finalization_warnings(ctx) + operating_regions_warnings(ctx, engagement_path))
 

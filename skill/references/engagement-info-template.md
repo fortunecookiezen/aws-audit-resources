@@ -21,6 +21,7 @@ before filling the file in.*
 - Report Status: DRAFT
 - Report Variant Note:
 - Operating Regions:
+- Pass Criteria:
 - Auditor Name:
 - Auditor Title:
 - Auditor Organization:
@@ -41,12 +42,19 @@ before filling the file in.*
 - *`Operating Regions` lists the AWS regions the client runs workloads in,
   comma-separated (e.g. `us-east-1, us-east-2`), as confirmed with the
   client at kickoff. `run_checks.py` reads it: outside these regions,
-  region-level controls such as GuardDuty become Low advisories, and
+  region-level controls such as GuardDuty become Informational advisories, and
   anything found there is reported under Regional Footprint whatever its
   own compliance. Still collect with `--all-regions`, or strays can't be
   found. Leave it blank to treat every collected region as operating. If
   you change it, run `run_checks.py` again before building the report;
   `build_report.py` warns when the two disagree.*
+- *`Pass Criteria` names the lowest severity that must be remediated for the
+  audit to pass: `Critical`, `High`, `Medium` or `Low`. Blank means the
+  default, `Medium`: Critical, High and Medium findings must be remediated
+  and verified by retest, and Low findings remediated or risk-accepted.
+  Agree it with the client at kickoff, and don't change it once findings
+  exist. `run_checks.py` reads it, and the report and management letter
+  state the result against it (see `check-catalog.md`, "Audit result").*
 - *`Auditor Name/Title/Organization/Contact` identify who performed the
   audit and produced the report - printed as a "Prepared By" block on the
   cover page. `Auditor Contact` is email and/or phone, whichever the auditor

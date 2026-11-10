@@ -328,9 +328,10 @@ which regions are in use and look for anything outside them.
   from the management account — `region_deny_scp` in the exceptions file
 
 With operating regions declared, the Detection & Monitoring checks above still
-report every collected region, but a gap outside the operating regions is a Low
-advisory: the service is still worth running there to catch misuse, unless an
-SCP denies the region.
+report every collected region, but a gap outside the operating regions is an
+Informational advisory, communicated to management rather than blocking a pass:
+the service is still worth running there to catch misuse, unless an SCP denies
+the region.
 
 ---
 

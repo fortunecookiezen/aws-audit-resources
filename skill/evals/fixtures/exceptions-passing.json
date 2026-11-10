@@ -1,0 +1,27 @@
+{
+  "accepted_admin_principals": [
+    {
+      "match": "name",
+      "pattern": "^OrganizationAccountAccessRole$",
+      "note": "AWS-created cross-account management role; expected to hold AdministratorAccess. Use is limited to the management account's break-glass process."
+    }
+  ],
+  "accepted_findings": [
+    {
+      "check_id": "iam_permissions_via_group_only",
+      "resource": "^ci-deploy$",
+      "note": "CI deploy user keeps a scoped inline policy until the pipeline moves to OIDC roles (ticket ACME-412).",
+      "approved_by": "Dana Smith, Head of Platform",
+      "approved_date": "2026-08-15",
+      "review_by": "2027-02-15"
+    },
+    {
+      "check_id": "s3_bucket_mfa_delete",
+      "resource": "^acme-customer-data$",
+      "note": "Versioning and Object Lock retention protect against deletion; MFA Delete requires root credentials, which are centrally locked. acme-public-assets has MFA Delete on.",
+      "approved_by": "Dana Smith, Head of Platform",
+      "approved_date": "2026-08-15",
+      "review_by": "2027-02-15"
+    }
+  ]
+}

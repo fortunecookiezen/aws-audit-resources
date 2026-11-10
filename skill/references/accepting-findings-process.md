@@ -19,6 +19,18 @@ that decision is: backed by specific evidence (not a verbal assurance),
 made by someone with the standing to make it, dated and attributable, and
 set up to be re-checked rather than accepted once and forgotten.
 
+Acceptance and the audit result are separate questions. Under the default pass
+standard (see `check-catalog.md`, "Audit result"), only **Low** findings can be
+resolved by acceptance. A Critical, High or Medium finding can still be accepted
+and recorded the same way, but the audit stays NOT PASSING until it's remediated
+and a retest shows it. Say so to the account owner before they put effort into an
+acceptance that won't change the result. Principals matched by
+`accepted_admin_principals` are the exception: they're administrators by design,
+not risks accepted in place of a fix, so they don't block a pass. Every accepted
+Low and by-design administrator is listed in the report's "Matters Communicated
+to Management" section and in the management letter, which management signs to
+acknowledge them.
+
 ## Roles
 
 - **Account/engagement owner** — the person who actually knows why a given

@@ -40,7 +40,7 @@ from datetime import datetime, timezone
 REGION_CHECK = "resources_outside_operating_regions"
 
 MACHINE_COLUMNS = [
-    "Tracker ID", "Tracker status", "Check ID", "Title", "Area", "Severity", "Advisory",
+    "Tracker ID", "Tracker status", "Blocks pass", "Check ID", "Title", "Area", "Severity", "Advisory",
     "Finding status", "Region", "Resource", "Evidence", "Remediation", "Control",
     "First seen", "Last seen", "Last verified by",
 ]
@@ -48,8 +48,8 @@ HUMAN_COLUMNS = [
     "Owner", "Target date (YYYY-MM-DD)", "Disposition", "Ticket",
     "Closed date (YYYY-MM-DD)", "Closure evidence", "Notes",
 ]
-SEVERITY_ORDER = {"Critical": 0, "High": 1, "Medium": 2, "Low": 3}
-STATUS_ORDER = {"Reopened": 0, "Open": 1, "Not re-verified": 2, "Accepted": 3}
+SEVERITY_ORDER = {"Critical": 0, "High": 1, "Medium": 2, "Low": 3, "Informational": 4}
+STATUS_ORDER = {"Reopened": 0, "Open": 1, "Not re-verified": 2, "Accepted": 3, "Informational": 4}
 
 
 def tracker_id(check_id, resource):
@@ -67,11 +67,16 @@ def current_rows(result, findings_name):
     seen = s.get("collected_at") or "unknown"
     verified_by = f"{findings_name} (collected {seen})"
     rows = {}
+    ar = s.get("audit_result")
+    blocking = {(b["check_id"], b["resource"]) for b in (ar or {}).get("blocking", [])}
 
     def add(f, resource, evidence, extra=None):
         row = {
             "Tracker ID": tracker_id(f["check_id"], resource),
-            "Tracker status": "Accepted" if f["status"] == "accepted" else "Open",
+            "Tracker status": ("Accepted" if f["status"] == "accepted" else
+                               "Informational" if f["severity"] == "Informational" else "Open"),
+            # Blank for findings from before the tool computed an audit result.
+            "Blocks pass": "" if ar is None else ("Yes" if (f["check_id"], f["resource"]) in blocking else "No"),
             "Check ID": f["check_id"],
             "Title": f["title"],
             "Area": f["area"],
@@ -87,8 +92,13 @@ def current_rows(result, findings_name):
             "Last seen": seen,
             "Last verified by": verified_by,
         }
-        if f["status"] == "accepted":
+        kind = (f.get("acceptance") or {}).get("kind")
+        if kind == "expected_admin_principal":
+            row["Disposition"] = "Administrator by design (accepted_admin_principals); communicated to management"
+        elif f["status"] == "accepted":
             row["Disposition"] = "Risk accepted (exceptions.json)"
+        elif f["severity"] == "Informational":
+            row["Disposition"] = "Informational; communicated to management"
         row.update(extra or {})
         rows[row["Tracker ID"]] = row
 
@@ -150,6 +160,8 @@ def merge(rows, previous, result, findings_name):
             row["Tracker status"] = status
             if status.startswith("Closed"):
                 row["Last verified by"] = verified_by
+        if "audit_result" in s:
+            row["Blocks pass"] = "Yes" if row["Tracker status"] == "Not re-verified" else "No"
         rows[pid] = row
     return rows
 

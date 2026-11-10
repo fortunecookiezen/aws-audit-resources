@@ -118,4 +118,4 @@ The script refuses to run with uncommitted or untracked files, or if the tag alr
 
 ## Security scanning
 
-This repo is scanned with GitGuardian. `.gitguardian.yaml` excludes `skill/evals/fixtures/` from secret scanning — that directory is synthetic test data for the skill's eval suite (see [`skill/evals/fixtures/README.md`](skill/evals/fixtures/README.md) for why it can still look like a credential report to a keyword-proximity detector). Nothing else in this repo is excluded; a finding anywhere else should be treated as real until shown otherwise.
+This repo is scanned with GitGuardian, with nothing excluded. `skill/evals/fixtures/` holds synthetic test data for the skill's eval suite. One file there has the shape of an IAM credential report, so a keyword-proximity detector could flag it; it contains no credentials. See [`skill/evals/fixtures/README.md`](skill/evals/fixtures/README.md). If a scan flags that directory, confirm the match is fixture data before excluding anything. Treat a finding anywhere else as real until shown otherwise.

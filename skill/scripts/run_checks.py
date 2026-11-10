@@ -637,6 +637,13 @@ def _root_centrally_managed(snap, exceptions):
     return False, None, contradiction
 
 
+def _admin_acceptance(entry):
+    """The acceptance record for an accepted_admin_principals match: a
+    principal that is an administrator by design, not a risk accepted in
+    place of a fix, so it doesn't block a passing audit result."""
+    return {"kind": "expected_admin_principal", "note": entry.get("note", ""), "pattern": entry.get("pattern")}
+
+
 def _match_accepted_admin_principal(name, arn, exceptions):
     """Check `name` (a role/user name) and `arn` against the
     accepted_admin_principals list in --exceptions. Returns the matching
@@ -769,6 +776,8 @@ def _apply_accepted_findings(findings, exceptions, snap):
                 f" Accepted: {rule['note']} (approved by {rule['approved_by']} on {rule['approved_date']}; "
                 f"review by {rule['review_by']}; rule: {check_id} / {pattern})."
             )
+            f["acceptance"] = {"kind": "risk_accepted",
+                               **{k: rule[k] for k in ("note", "approved_by", "approved_date", "review_by")}}
         if expired:
             warnings.append(f"{label} expired on {rule['review_by']}; matching findings left as fail.")
     return warnings
@@ -1201,6 +1210,7 @@ def check_iam_no_full_admin_policy(snap, exceptions=None):
                     "status": "accepted",
                     "evidence": f"arn={p['arn']}. Accepted: {accepted.get('note', 'matches an accepted_admin_principals rule')} "
                                 f"(pattern: {accepted.get('pattern')}).",
+                    "acceptance": _admin_acceptance(accepted),
                 })
             else:
                 results.append({
@@ -1228,6 +1238,7 @@ def check_iam_no_full_admin_policy(snap, exceptions=None):
                 "status": "accepted",
                 "evidence": f"principal={arn}, inline policy grants Action:*/Resource:*. Accepted: "
                             f"{accepted.get('note', 'matches an accepted_admin_principals rule')} (pattern: {accepted.get('pattern')}).",
+                "acceptance": _admin_acceptance(accepted),
             })
         else:
             results.append({
@@ -1861,7 +1872,7 @@ def check_ecr_tag_immutability(snap):
 # Operating regions. engagement-info.md may declare the regions the client
 # operates in. Region-level controls (the detection services, EBS
 # encryption by default) and the AWS-created defaults (default VPC and its
-# security group) failing OUTSIDE them become Low-severity advisories rather
+# security group) failing OUTSIDE them become Informational advisories rather
 # than full findings - or pass, when an attested region-deny SCP covers the
 # region and nothing was found there. Every resource-level check runs
 # everywhere at full severity, and resources_outside_operating_regions
@@ -2046,7 +2057,7 @@ def _region_deny_scp(exceptions, operating):
 
 def _apply_operating_regions(findings, operating, denied, scp_note, inventory, defaults):
     """Rate region-level and AWS-default failures outside the operating
-    regions as Low advisories, or pass them where an attested SCP denies the
+    regions as Informational advisories, or pass them where an attested SCP denies the
     region and nothing was found there. Findings are changed in place."""
     if not operating:
         return
@@ -2064,7 +2075,7 @@ def _apply_operating_regions(findings, operating, denied, scp_note, inventory, d
             f["evidence"] += f" Outside the operating regions, and denied by an organization SCP: {scp_note}"
             continue
         f["advisory"] = True
-        f["severity"] = "Low"
+        f["severity"] = "Informational"
         prefix = ("Advisory, outside the operating regions: unused regions still need this control, because "
                   "activity there would otherwise go unseen. ")
         if scp_covers:
@@ -2179,6 +2190,99 @@ def _region_warnings(snap, operating):
             incomplete["resources_outside_operating_regions"] = [
                 f"enabled region(s) not collected: {', '.join(uncollected)}"]
     return warnings, incomplete
+
+
+# ---------------------------------------------------------------------------
+# Audit result. An audit passes when nothing at or above the remediation
+# threshold (default Medium: Critical, High and Medium) is open or only
+# risk-accepted, every finding below it (Low) is remediated or accepted, and
+# every applicable check was evaluated completely. Informational findings -
+# out-of-region advisories, and Lows with no control in the audited
+# framework - never block; they're communicated to management with the
+# accepted Lows. A principal matched by accepted_admin_principals is an
+# administrator by design rather than an accepted risk, so it doesn't block.
+# ---------------------------------------------------------------------------
+
+SEVERITIES = ["Critical", "High", "Medium", "Low", "Informational"]
+DEFAULT_REMEDIATE_THRESHOLD = "Medium"
+
+
+def parse_pass_criteria(path):
+    """(remediation threshold, warnings) from the "- Pass Criteria:" line in
+    engagement-info.md's Report Metadata: the lowest severity that must be
+    remediated (Critical, High, Medium or Low; default Medium). Findings
+    below it must be remediated or risk-accepted."""
+    if not path or not os.path.exists(path):
+        return DEFAULT_REMEDIATE_THRESHOLD, []
+    in_metadata = False
+    with open(path) as f:
+        for line in f:
+            s = line.strip()
+            if s.startswith("## "):
+                in_metadata = s[3:].strip().lower() == "report metadata"
+                continue
+            m = re.match(r"^-\s*Pass Criteria:\s*(.*)$", s, re.IGNORECASE) if in_metadata else None
+            if not m or not m.group(1).strip():
+                continue
+            found = [sev for sev in SEVERITIES[:4] if re.search(rf"\b{sev}\b", m.group(1), re.IGNORECASE)]
+            if len(found) != 1:
+                return DEFAULT_REMEDIATE_THRESHOLD, [
+                    f"Pass Criteria {m.group(1).strip()!r} in {os.path.basename(path)} doesn't name exactly one of "
+                    f"Critical, High, Medium or Low; using the default ({DEFAULT_REMEDIATE_THRESHOLD})."]
+            return found[0], []
+    return DEFAULT_REMEDIATE_THRESHOLD, []
+
+
+def _rate_unmapped(findings):
+    """Mark findings with no control in the audited framework, and rate the
+    Low ones Informational. Medium and above keep their severity: a public
+    snapshot is a risk whether or not the benchmark covers the service."""
+    for f in findings:
+        refs = [str(v) for v in (f.get("refs") or {}).values() if v]
+        if refs and all(r.startswith("Not ") for r in refs):
+            f["outside_framework"] = True
+            if f["severity"] == "Low":
+                f["severity"] = "Informational"
+
+
+def audit_result(findings, threshold, skipped, skipped_reasons, incomplete):
+    """PASS or NOT PASSING, with every finding or check that blocks a pass."""
+    must = SEVERITIES[:SEVERITIES.index(threshold) + 1]
+    blocking = []
+    for f in findings:
+        sev, status = f["severity"], f["status"]
+        if sev == "Informational" or status == "pass":
+            continue
+        kind = (f.get("acceptance") or {}).get("kind")
+        if status == "fail":
+            reason = "open" if sev in must else "open, not remediated or risk-accepted"
+        elif status == "accepted" and sev in must and kind != "expected_admin_principal":
+            reason = "risk-accepted, but must be remediated at this severity"
+        else:
+            continue
+        blocking.append({"check_id": f["check_id"], "resource": f["resource"], "severity": sev, "reason": reason})
+    for c in skipped:
+        if c not in skipped_reasons:
+            blocking.append({"check_id": c, "resource": None, "severity": None,
+                             "reason": "not evaluated: the snapshot lacked the data it needs"})
+    for c in incomplete:
+        blocking.append({"check_id": c, "resource": None, "severity": None,
+                         "reason": "incomplete: " + "; ".join(incomplete[c])})
+    counts = {}
+    for b in blocking:
+        key = f"{b['severity']} {b['reason']}" if b["severity"] else b["reason"].split(":")[0]
+        counts[key] = counts.get(key, 0) + 1
+    communicated = [f for f in findings if f["status"] != "pass" and (
+        f["severity"] == "Informational" or (f["status"] == "accepted" and f["severity"] not in must)
+        or (f.get("acceptance") or {}).get("kind") == "expected_admin_principal")]
+    return {
+        "result": "NOT PASSING" if blocking else "PASS",
+        "remediate_threshold": threshold,
+        "must_remediate": must,
+        "blocking_counts": counts,
+        "blocking": blocking,
+        "communicated_to_management": len(communicated),
+    }
 
 
 CHECK_FUNCS = {
@@ -2372,7 +2476,8 @@ def _incomplete_checks(snapshot, check_ids, covered=None):
     return incomplete
 
 
-def run(snapshot, framework, exceptions=None, base_dir=None, operating_regions=None):
+def run(snapshot, framework, exceptions=None, base_dir=None, operating_regions=None,
+        remediate_threshold=DEFAULT_REMEDIATE_THRESHOLD):
     """base_dir is the exceptions file's directory; verified_values evidence
     paths are relative to it. operating_regions is the list declared in
     engagement-info.md (parse_operating_regions), or None."""
@@ -2403,6 +2508,7 @@ def run(snapshot, framework, exceptions=None, base_dir=None, operating_regions=N
                 "status": r["status"],
                 "evidence": r["evidence"],
                 **({"resources": r["resources"]} if "resources" in r else {}),
+                **({"acceptance": r["acceptance"]} if "acceptance" in r else {}),
             })
 
     selected = {c: m for c, m in CHECKS_META.items() if framework == "all" or framework in m["refs"]}
@@ -2436,6 +2542,8 @@ def run(snapshot, framework, exceptions=None, base_dir=None, operating_regions=N
         else:
             checks_evaluated.append(check_id)
             add_findings(check_id, selected[check_id], results)
+
+    _rate_unmapped(findings)
 
     for f in findings:
         entry = verified.get(f["check_id"], {}).get(f["resource"])
@@ -2493,6 +2601,7 @@ def run(snapshot, framework, exceptions=None, base_dir=None, operating_regions=N
                              "note": scp_note} if scp_note else None),
         "region_warnings": region_warnings,
         "advisory_findings": sum(1 for f in findings if f.get("advisory")),
+        "audit_result": audit_result(findings, remediate_threshold, checks_skipped, skipped_reasons, incomplete),
         # False: the snapshot predates collection_errors, so a failed call
         # can't be told from an empty result.
         "collection_errors_recorded": "collection_errors" in snapshot,
@@ -2550,10 +2659,11 @@ def main():
     if args.engagement_info and not os.path.exists(args.engagement_info):
         parser.error(f"--engagement-info {args.engagement_info} not found")
     operating_regions, parse_warnings = parse_operating_regions(info_path)
+    threshold, criteria_warnings = parse_pass_criteria(info_path)
 
     base_dir = os.path.dirname(os.path.abspath(args.exceptions)) if args.exceptions else None
-    result = run(snapshot, args.framework, exceptions, base_dir, operating_regions)
-    result["summary"]["region_warnings"] = parse_warnings + result["summary"]["region_warnings"]
+    result = run(snapshot, args.framework, exceptions, base_dir, operating_regions, threshold)
+    result["summary"]["region_warnings"] = parse_warnings + criteria_warnings + result["summary"]["region_warnings"]
 
     with open(args.output, "w") as f:
         json.dump(result, f, indent=2, default=str)
@@ -2578,6 +2688,11 @@ def main():
               "so a failed API call can't be told from an empty result. Collect again to rule that out.",
               file=sys.stderr)
     s = result["summary"]
+    ar = s["audit_result"]
+    print(f"Audit result: {ar['result']} (Critical through {ar['remediate_threshold']} must be remediated"
+          + (", lower severities remediated or risk-accepted" if ar["remediate_threshold"] != "Low" else "") + ")"
+          + (": " + "; ".join(f"{n} {k}" for k, n in sorted(ar["blocking_counts"].items())) if ar["blocking"] else "")
+          + f". {ar['communicated_to_management']} item(s) to communicate to management.", file=sys.stderr)
     if s["operating_regions"]:
         print(f"Operating regions: {', '.join(s['operating_regions'])} (from {info_path}); "
               f"{s['advisory_findings']} advisory finding(s) outside them.", file=sys.stderr)
