@@ -1,0 +1,668 @@
+{
+  "collected_at": "2026-08-20T14:00:00+00:00",
+  "account_id": "111122223333",
+  "caller_arn": "arn:aws:sts::111122223333:assumed-role/opspath-CrossAccountSecurityAuditRole/audit-session",
+  "regions": [
+    "eu-west-1",
+    "us-east-1",
+    "us-west-2"
+  ],
+  "iam": {
+    "password_policy": {
+      "MinimumPasswordLength": 14,
+      "PasswordReusePrevention": 24
+    },
+    "account_summary": {
+      "AccountMFAEnabled": 1,
+      "AccountAccessKeysPresent": 0
+    },
+    "root_mfa_enabled": true,
+    "root_access_keys_present": false,
+    "root_has_virtual_mfa": false,
+    "credential_report": [
+      {
+        "user": "<root_account>",
+        "password_enabled": "false",
+        "password_last_used": "N/A",
+        "mfa_active": "true",
+        "access_key_1_active": "false",
+        "access_key_1_last_rotated": "2025-01-01T00:00:00+00:00",
+        "access_key_1_last_used_date": "N/A"
+      },
+      {
+        "user": "bob",
+        "password_enabled": "true",
+        "password_last_used": "2026-08-19T00:00:00+00:00",
+        "mfa_active": "true",
+        "access_key_1_active": "false"
+      },
+      {
+        "user": "ci-deploy",
+        "password_enabled": "false",
+        "mfa_active": "false",
+        "access_key_1_active": "true",
+        "access_key_1_last_rotated": "2026-07-01T00:00:00+00:00",
+        "access_key_1_last_used_date": "2026-08-18T00:00:00+00:00"
+      }
+    ],
+    "users": [
+      {
+        "user_name": "bob",
+        "attached_managed_policies": [],
+        "inline_policy_names": [],
+        "has_direct_attachment": false,
+        "group_names": [
+          "developers"
+        ]
+      },
+      {
+        "user_name": "ci-deploy",
+        "attached_managed_policies": [],
+        "inline_policy_names": [
+          "ci-deploy-inline-policy"
+        ],
+        "has_direct_attachment": true,
+        "group_names": []
+      }
+    ],
+    "policies": [
+      {
+        "policy_name": "AdministratorAccess",
+        "arn": "arn:aws:iam::aws:policy/AdministratorAccess",
+        "is_aws_managed": true,
+        "is_admin_wildcard": true,
+        "attached_role_names": [
+          "OrganizationAccountAccessRole"
+        ],
+        "attached_user_names": [],
+        "attached_group_names": []
+      }
+    ],
+    "support_role_exists": true
+  },
+  "s3": {
+    "account_public_access_block": {
+      "BlockPublicAcls": true,
+      "IgnorePublicAcls": true,
+      "BlockPublicPolicy": true,
+      "RestrictPublicBuckets": true
+    },
+    "buckets": [
+      {
+        "name": "acme-public-assets",
+        "public_access_block": {
+          "BlockPublicAcls": true,
+          "IgnorePublicAcls": true,
+          "BlockPublicPolicy": true,
+          "RestrictPublicBuckets": true
+        },
+        "bucket_policy_present": true,
+        "has_https_only_deny": true,
+        "versioning_status": "Enabled",
+        "mfa_delete": "Enabled",
+        "logging_enabled": true,
+        "region": "us-east-1"
+      },
+      {
+        "name": "acme-customer-data",
+        "public_access_block": {
+          "BlockPublicAcls": true,
+          "IgnorePublicAcls": true,
+          "BlockPublicPolicy": true,
+          "RestrictPublicBuckets": true
+        },
+        "bucket_policy_present": true,
+        "has_https_only_deny": true,
+        "versioning_status": "Enabled",
+        "mfa_delete": "Disabled",
+        "logging_enabled": true,
+        "region": "us-east-1"
+      }
+    ]
+  },
+  "cloudtrail": {
+    "trails": [
+      {
+        "name": "acme-trail",
+        "trail_arn": "arn:aws:cloudtrail:us-east-1:111122223333:trail/acme-trail",
+        "is_multi_region_trail": true,
+        "is_logging": true,
+        "log_file_validation_enabled": true,
+        "kms_key_id": "arn:aws:kms:us-east-1:111122223333:key/trail-key",
+        "s3_bucket_name": "acme-cloudtrail-logs",
+        "s3_bucket_access_logging_enabled": true,
+        "event_selectors": [
+          {
+            "ReadWriteType": "All",
+            "IncludeManagementEvents": true,
+            "DataResources": []
+          }
+        ],
+        "advanced_event_selectors": []
+      }
+    ]
+  },
+  "ec2": {
+    "vpcs": [
+      {
+        "region": "us-east-1",
+        "vpc_id": "vpc-0acme1",
+        "is_default": false
+      },
+      {
+        "region": "us-west-2",
+        "vpc_id": "vpc-0west2default",
+        "is_default": true
+      },
+      {
+        "region": "eu-west-1",
+        "vpc_id": "vpc-0euwdefault",
+        "is_default": true
+      }
+    ],
+    "flow_logs": [
+      {
+        "region": "us-east-1",
+        "resource_id": "vpc-0acme1",
+        "flow_log_status": "ACTIVE",
+        "traffic_type": "ALL"
+      }
+    ],
+    "security_groups": [
+      {
+        "region": "us-east-1",
+        "group_id": "sg-0web1234",
+        "group_name": "web-sg",
+        "vpc_id": "vpc-0acme1",
+        "ip_permissions": [
+          {
+            "IpProtocol": "tcp",
+            "FromPort": 443,
+            "ToPort": 443,
+            "IpRanges": [
+              {
+                "CidrIp": "0.0.0.0/0"
+              }
+            ]
+          }
+        ],
+        "ip_permissions_egress": [
+          {
+            "IpProtocol": "-1"
+          }
+        ]
+      },
+      {
+        "region": "us-east-1",
+        "group_id": "sg-0default1",
+        "group_name": "default",
+        "vpc_id": "vpc-0acme1",
+        "ip_permissions": [],
+        "ip_permissions_egress": []
+      },
+      {
+        "region": "us-west-2",
+        "group_id": "sg-0west2default",
+        "group_name": "default",
+        "vpc_id": "vpc-0west2default",
+        "ip_permissions": [
+          {
+            "IpProtocol": "-1",
+            "UserIdGroupPairs": [
+              {
+                "GroupId": "sg-0west2default"
+              }
+            ]
+          }
+        ],
+        "ip_permissions_egress": [
+          {
+            "IpProtocol": "-1",
+            "IpRanges": [
+              {
+                "CidrIp": "0.0.0.0/0"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "region": "eu-west-1",
+        "group_id": "sg-0euwdefault",
+        "group_name": "default",
+        "vpc_id": "vpc-0euwdefault",
+        "ip_permissions": [
+          {
+            "IpProtocol": "-1",
+            "UserIdGroupPairs": [
+              {
+                "GroupId": "sg-0euwdefault"
+              }
+            ]
+          }
+        ],
+        "ip_permissions_egress": [
+          {
+            "IpProtocol": "-1",
+            "IpRanges": [
+              {
+                "CidrIp": "0.0.0.0/0"
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "instances": [
+      {
+        "region": "us-east-1",
+        "instance_id": "i-0acmeweb01",
+        "state": "running",
+        "http_tokens": "required"
+      }
+    ]
+  },
+  "account_contacts": {
+    "primary_contact": {
+      "FullName": "Acme Ops",
+      "PhoneNumber": "+15555550100"
+    },
+    "security_contact": {
+      "FullName": "Acme Security",
+      "EmailAddress": "security@example.com",
+      "PhoneNumber": "+15555550101"
+    }
+  },
+  "collection_errors": [],
+  "guardduty": {
+    "regions": [
+      {
+        "region": "us-east-1",
+        "detectors": [
+          {
+            "detector_id": "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4",
+            "status": "ENABLED"
+          }
+        ]
+      },
+      {
+        "region": "us-west-2",
+        "detectors": []
+      },
+      {
+        "region": "eu-west-1",
+        "detectors": []
+      }
+    ]
+  },
+  "securityhub": {
+    "regions": [
+      {
+        "region": "us-east-1",
+        "enabled": true,
+        "standards": [
+          {
+            "arn": "arn:aws:securityhub:us-east-1::standards/aws-foundational-security-best-practices/v/1.0.0",
+            "status": "READY"
+          }
+        ]
+      },
+      {
+        "region": "us-west-2",
+        "enabled": false,
+        "standards": []
+      },
+      {
+        "region": "eu-west-1",
+        "enabled": false,
+        "standards": []
+      }
+    ]
+  },
+  "inspector": {
+    "regions": [
+      {
+        "region": "us-east-1",
+        "account_status": "ENABLED",
+        "ec2": "ENABLED",
+        "ecr": "ENABLED",
+        "lambda": "ENABLED"
+      },
+      {
+        "region": "us-west-2",
+        "account_status": "DISABLED",
+        "ec2": "DISABLED",
+        "ecr": "DISABLED",
+        "lambda": "DISABLED"
+      },
+      {
+        "region": "eu-west-1",
+        "account_status": "DISABLED",
+        "ec2": "DISABLED",
+        "ecr": "DISABLED",
+        "lambda": "DISABLED"
+      }
+    ]
+  },
+  "access_analyzer": {
+    "regions": [
+      {
+        "region": "us-east-1",
+        "analyzers": [
+          {
+            "name": "acme-account-analyzer",
+            "type": "ACCOUNT",
+            "status": "ACTIVE"
+          }
+        ]
+      },
+      {
+        "region": "us-west-2",
+        "analyzers": []
+      },
+      {
+        "region": "eu-west-1",
+        "analyzers": []
+      }
+    ]
+  },
+  "config": {
+    "regions": [
+      {
+        "region": "us-east-1",
+        "recorders": [
+          {
+            "name": "default",
+            "all_supported": true,
+            "include_global_resource_types": true,
+            "recording_strategy": "ALL_SUPPORTED_RESOURCE_TYPES",
+            "recording": true,
+            "last_status": "SUCCESS"
+          }
+        ]
+      },
+      {
+        "region": "us-west-2",
+        "recorders": []
+      },
+      {
+        "region": "eu-west-1",
+        "recorders": []
+      }
+    ]
+  },
+  "logs": {
+    "log_groups": [
+      {
+        "region": "us-east-1",
+        "name": "/aws/cloudtrail/acme-trail",
+        "retention_in_days": 400,
+        "kms_key_id": null
+      },
+      {
+        "region": "us-east-1",
+        "name": "/aws/lambda/acme-orders",
+        "retention_in_days": 365,
+        "kms_key_id": null
+      },
+      {
+        "region": "us-east-1",
+        "name": "/ecs/acme-web",
+        "retention_in_days": 365,
+        "kms_key_id": null
+      }
+    ]
+  },
+  "rds": {
+    "instances": [
+      {
+        "region": "us-east-1",
+        "id": "acme-orders-db",
+        "engine": "postgres",
+        "cluster_id": null,
+        "publicly_accessible": false,
+        "storage_encrypted": true,
+        "backup_retention_period": 7,
+        "deletion_protection": true,
+        "multi_az": false
+      },
+      {
+        "region": "us-east-1",
+        "id": "acme-billing-aurora-1",
+        "engine": "aurora-postgresql",
+        "cluster_id": "acme-billing",
+        "publicly_accessible": false,
+        "storage_encrypted": true,
+        "backup_retention_period": 7,
+        "deletion_protection": true,
+        "multi_az": false
+      }
+    ],
+    "clusters": [
+      {
+        "region": "us-east-1",
+        "id": "acme-billing",
+        "engine": "aurora-postgresql",
+        "storage_encrypted": true,
+        "backup_retention_period": 14,
+        "deletion_protection": true
+      }
+    ],
+    "snapshots": [
+      {
+        "region": "us-east-1",
+        "id": "acme-orders-db-pre-migration",
+        "kind": "instance",
+        "encrypted": true,
+        "public": false,
+        "unreadable": []
+      },
+      {
+        "region": "us-east-1",
+        "id": "acme-billing-2026-10-01",
+        "kind": "cluster",
+        "encrypted": true,
+        "public": false,
+        "unreadable": []
+      }
+    ]
+  },
+  "kms": {
+    "keys": [
+      {
+        "region": "us-east-1",
+        "key_id": "1234abcd-12ab-34cd-56ef-1234567890ab",
+        "aliases": [
+          "alias/acme-data"
+        ],
+        "key_spec": "SYMMETRIC_DEFAULT",
+        "origin": "AWS_KMS",
+        "multi_region": false,
+        "rotation_supported": true,
+        "rotation_enabled": true,
+        "rotation_period_days": 365,
+        "public_policy": false,
+        "unreadable": []
+      },
+      {
+        "region": "us-east-1",
+        "key_id": "0987dcba-09fe-87dc-65ba-ab0987654321",
+        "aliases": [
+          "alias/acme-legacy"
+        ],
+        "key_spec": "SYMMETRIC_DEFAULT",
+        "origin": "AWS_KMS",
+        "multi_region": false,
+        "rotation_supported": true,
+        "rotation_enabled": true,
+        "public_policy": false,
+        "unreadable": []
+      },
+      {
+        "region": "us-east-1",
+        "key_id": "abcd1111-2222-3333-4444-abcdef000003",
+        "aliases": [
+          "alias/acme-signing"
+        ],
+        "key_spec": "RSA_2048",
+        "origin": "AWS_KMS",
+        "multi_region": false,
+        "rotation_supported": false,
+        "rotation_enabled": true,
+        "public_policy": false,
+        "unreadable": []
+      }
+    ]
+  },
+  "secretsmanager": {
+    "secrets": [
+      {
+        "region": "us-east-1",
+        "name": "acme/orders/db",
+        "arn": "arn:aws:secretsmanager:us-east-1:111122223333:secret:acme/orders/db-AbCdEf",
+        "owning_service": null,
+        "rotation_enabled": true,
+        "last_rotated": "2026-08-01T00:00:00+00:00",
+        "last_changed": "2025-01-15T00:00:00+00:00",
+        "public_policy": false,
+        "unreadable": []
+      },
+      {
+        "region": "us-east-1",
+        "name": "rds!cluster-acme-billing",
+        "arn": "arn:aws:secretsmanager:us-east-1:111122223333:secret:rds!cluster-acme-billing-GhIjKl",
+        "owning_service": "rds",
+        "rotation_enabled": true,
+        "last_rotated": "2026-10-01T00:00:00+00:00",
+        "last_changed": "2026-10-01T00:00:00+00:00",
+        "public_policy": false,
+        "unreadable": []
+      }
+    ]
+  },
+  "dynamodb": {
+    "tables": [
+      {
+        "region": "us-east-1",
+        "name": "acme-sessions",
+        "pitr_status": "ENABLED",
+        "unreadable": []
+      },
+      {
+        "region": "us-east-1",
+        "name": "acme-ledger",
+        "pitr_status": "ENABLED",
+        "unreadable": []
+      }
+    ]
+  },
+  "elasticache": {
+    "replication_groups": [
+      {
+        "region": "us-east-1",
+        "id": "acme-cache",
+        "engine": "redis",
+        "at_rest_encryption": true,
+        "transit_encryption": true,
+        "transit_encryption_mode": "required",
+        "auth_token_enabled": false
+      }
+    ],
+    "clusters": []
+  },
+  "ebs": {
+    "regions": [
+      {
+        "region": "us-east-1",
+        "encryption_by_default": true,
+        "snapshot_block_public_access": "block-all-sharing",
+        "public_snapshot_ids": [],
+        "unreadable": []
+      },
+      {
+        "region": "us-west-2",
+        "encryption_by_default": true,
+        "snapshot_block_public_access": "block-all-sharing",
+        "public_snapshot_ids": [],
+        "unreadable": []
+      },
+      {
+        "region": "eu-west-1",
+        "encryption_by_default": false,
+        "snapshot_block_public_access": "unblocked",
+        "public_snapshot_ids": [],
+        "unreadable": []
+      }
+    ],
+    "volumes": [
+      {
+        "region": "us-east-1",
+        "volume_id": "vol-0acme1",
+        "encrypted": true,
+        "state": "in-use",
+        "attached_to": [
+          "i-0acme1"
+        ]
+      }
+    ]
+  },
+  "ecr": {
+    "registries": [
+      {
+        "region": "us-east-1",
+        "scan_type": "ENHANCED",
+        "rules": [
+          {
+            "scanFrequency": "CONTINUOUS_SCAN",
+            "repositoryFilters": [
+              {
+                "filter": "*",
+                "filterType": "WILDCARD"
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "repositories": [
+      {
+        "region": "us-east-1",
+        "name": "acme/web",
+        "scan_on_push": true,
+        "tag_mutability": "IMMUTABLE",
+        "public_policy": false,
+        "unreadable": []
+      },
+      {
+        "region": "us-east-1",
+        "name": "acme/worker",
+        "scan_on_push": true,
+        "tag_mutability": "IMMUTABLE",
+        "public_policy": false,
+        "unreadable": []
+      }
+    ]
+  },
+  "sns": {
+    "topics": [
+      {
+        "region": "us-east-1",
+        "name": "acme-alerts",
+        "kms_master_key_id": null,
+        "public_policy": false,
+        "unreadable": []
+      }
+    ]
+  },
+  "enabled_regions": [
+    "eu-west-1",
+    "us-east-1",
+    "us-west-2"
+  ],
+  "region_opt_in_status": {
+    "af-south-1": "not-opted-in",
+    "eu-west-1": "opt-in-not-required",
+    "us-east-1": "opt-in-not-required",
+    "us-west-2": "opt-in-not-required"
+  }
+}

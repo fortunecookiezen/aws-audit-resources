@@ -240,6 +240,22 @@ work has stopped. Do this once, when the engagement is actually done:
    report weren't produced by one released tool version: rerun the checks
    and the report from the release that collected the final snapshot.
 
+   Then read the **audit result** in that retest's findings
+   (`summary.audit_result`, also on the report's cover). Settled findings
+   don't make a pass by themselves. Under the default standard, a Critical,
+   High or Medium finding that was accepted rather than fixed keeps the
+   result NOT PASSING (see `check-catalog.md`, "Audit result"). That's a
+   legitimate final outcome; finalize the report with it rather than holding
+   the report back. The tracker's "Blocks pass" column shows exactly which
+   rows stand in the way.
+
+   Send the management letter (`..._management-letter_<STATUS>.docx`,
+   written beside the report) to the account/engagement owner. It lists the
+   accepted Lows, administrators by design and Informational findings. Get
+   it signed, and file the signed copy in the engagement directory. Its
+   Informational rows in the tracker have status "Informational" and need no
+   closure.
+
 2. **Fill in the last two Testing Narrative rows in `engagement-info.md`:**
    `Findings Review` (who reviewed the final findings and when — this can
    be the auditor, the account/engagement owner, or both; record whoever
