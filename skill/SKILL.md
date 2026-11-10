@@ -5,7 +5,7 @@ description: Audits an AWS account's security configuration against CIS AWS Foun
 
 # AWS Account Security Audit
 
-Audits the six core technical areas of an AWS account's security posture — IAM, MFA, S3 bucket security, CloudTrail/logging, Security Groups/VPC exposure, and root account protections — against one compliance framework at a time, and produces a Word document report of findings.
+Audits ten technical areas of an AWS account's security posture — the six core areas (IAM, MFA, S3 bucket security, CloudTrail/logging, Security Groups/VPC exposure, root account protections) plus Detection & Monitoring (GuardDuty, Security Hub, Inspector, IAM Access Analyzer, AWS Config, log retention), Databases (RDS, DynamoDB, ElastiCache), Encryption & Secrets (KMS, Secrets Manager, EBS, resource policies) and Containers (ECR) — against one compliance framework at a time, and produces a Word document report of findings.
 
 This skill lives inside the `aws-audit-resources` repository, alongside the IAM role templates (`cloudformation/`, `terraform/`) that provide the actual cross-account access the live-data path below uses. If you are working inside a checkout of that repo, the role templates referenced in Step 2 are at `../cloudformation/security-audit-role.yml` and `../terraform/security-audit-role/` relative to this skill directory.
 
@@ -19,7 +19,7 @@ Ask the user which framework to audit against if not already specified:
 - **SOC2** — SOC 2 Trust Services Criteria (Common Criteria / Security category)
 - **ISO27001** — ISO/IEC 27001:2022 Annex A
 
-Confirm the scope is the six core areas listed above. This skill does not audit RDS, EFS, EBS, KMS-general, AWS Config, AWS Organizations governance, Security Hub/GuardDuty enablement, or other services outside those six areas — if the user wants broader coverage, note that it's out of scope for this version rather than guessing at checks that don't exist yet.
+Confirm the scope is the ten areas listed above. This skill does not audit load balancers, CloudFront, API Gateway, WAF, ACM, Lambda, Cognito, ECS/EKS workloads, Elastic Beanstalk, CI/CD services, Systems Manager, CloudFormation, EFS, CloudWatch metric-filter alarms, AWS Organizations governance, or other services outside those areas — if the user wants broader coverage, note that it's out of scope for this version rather than guessing at checks that don't exist yet.
 
 Create the engagement directory and its `engagement-info.md` now, from this skill directory:
 ```bash
@@ -120,7 +120,7 @@ The report it produces has this structure:
 4. **Accepted Findings** (only if `--exceptions` was used and produced any) — findings with status `"accepted"`: the underlying fact, who accepted it and why (from the exceptions file's `note`), and the matching rule. Keep these visibly separate from both Key Findings and Passing Controls — they're neither an open issue nor a clean pass, they're a reviewed, deliberate acceptance.
 5. **Passing Controls** — brief list, so the report isn't only bad news
 6. **Detailed Findings by Area** — one subsection per core area (IAM, MFA, S3, CloudTrail/Logging, Security Groups/VPC, Root Account), each finding with control reference(s) for the chosen framework, evidence, and remediation
-7. **Appendix: Scope & Methodology** — which six areas were in scope, which controls were evaluated vs. skipped (including the "manual/extended checks" list from `references/check-catalog.md`), data source used, date of collection, and whether an exceptions file was applied (and if so, note its presence in the evidence package per Step 3)
+7. **Appendix: Scope & Methodology** — which areas were in scope, which controls were evaluated vs. skipped (including the "manual/extended checks" list from `references/check-catalog.md`), data source used, date of collection, and whether an exceptions file was applied (and if so, note its presence in the evidence package per Step 3)
 
 Write the report into the same `$AUDIT_DIR` as the snapshot and findings — once the audit is complete, that whole directory is the evidence package. Follow `references/evidence-handling.md` for what to do with it next (a private engagement repository or an encrypted archive, never this repo).
 
@@ -135,8 +135,8 @@ A report only becomes `FINAL` through this explicit step — never by editing th
 ## Reference files
 
 - `references/engagement-info-template.md` — the per-engagement file format (copy to `engagement-info.md`) for author data, Report Status (DRAFT/FINAL), and the Testing Narrative table that `scripts/build_report.py` renders onto the report cover page
-- `references/check-catalog.md` — master table of all 27 automated checks with cross-framework control IDs (including which checks are best-practice-only, with no control in a given framework); keep in lockstep with `run_checks.py`'s `CHECKS_META`/`CHECK_FUNCS` and `collect_aws_data.py`'s collectors when extending
-- `references/cis-aws-foundations.md` — full CIS AWS Foundations Benchmark v7.0.0 control reference (36 controls, six core areas)
+- `references/check-catalog.md` — master table of all 49 automated checks with cross-framework control IDs (including which checks are best-practice-only, with no control in a given framework); keep in lockstep with `run_checks.py`'s `CHECKS_META`/`CHECK_FUNCS` and `collect_aws_data.py`'s collectors when extending
+- `references/cis-aws-foundations.md` — full CIS AWS Foundations Benchmark v7.0.0 control reference (36 controls, six core areas; the CIS IDs of the newer detection, database and encryption checks are listed in `check-catalog.md`, footnote ⁵)
 - `references/well-architected-security.md` — AWS Well-Architected Security Pillar (SEC01–SEC08) mapping
 - `references/soc2-mapping.md` — SOC 2 Trust Services Criteria (CC6.x/CC7.x) mapping
 - `references/iso27001-mapping.md` — ISO/IEC 27001:2022 Annex A control mapping
@@ -148,7 +148,7 @@ A report only becomes `FINAL` through this explicit step — never by editing th
 
 ## Scripts
 
-- `scripts/collect_aws_data.py` — boto3 collector; supports `--profile`, `--role-arn`/`--role-session-name` (assume-role), `--regions`/`--all-regions`, `-o/--output`
+- `scripts/collect_aws_data.py` — boto3 collector; supports `--profile`, `--role-arn`/`--role-session-name` (assume-role), `--regions`/`--all-regions` (every regional service is collected from these regions; use `--all-regions` for an audit, since the detection checks report each region that lacks the service), `-o/--output`
 - `scripts/run_checks.py` — evaluates a snapshot against one framework; `snapshot.json --framework {cis|well_architected|soc2|iso27001|all} [--exceptions exceptions.json] -o findings.json`
 - `scripts/build_report.py` — builds the Step 4 Word report from a findings file plus `engagement-info.md`; `findings.json [--label retest-1] [--variant-note "..."] [--data-source "..."] [--snapshot snapshot.json] [--engagement-info path] [--out-dir dir]`
 - `scripts/collect_root_management_evidence.sh` — run in AWS CloudShell in the Organizations management account to record who confirmed centralized root access management, when, and the result, as one JSON file for `evidence/`; `[output-dir]`

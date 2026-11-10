@@ -1,6 +1,6 @@
 # SOC 2 (AICPA TSC 2017, Security/Common Criteria) — AWS Technical Mapping
 
-Practical mapping between six AWS security audit areas and the SOC 2 Trust Services
+Practical mapping between ten AWS security audit areas and the SOC 2 Trust Services
 Criteria (TSC) Common Criteria (CC) series. Scoped to the Security ("Common Criteria")
 category only — not the full TSC (Availability, Confidentiality, Processing Integrity,
 Privacy). Intended for use in an audit skill that reports findings like:
@@ -181,6 +181,129 @@ because a compromised root account is a complete, unrestrictable account takeove
 - Alerting configured (CloudWatch/EventBridge/GuardDuty) to notify on any root login or root API activity
 - AWS account contact info (billing/security/operations) kept current for incident notification
 - Organizations/SCPs used to further restrict what root can do at the member-account level, where applicable
+
+---
+
+## 7. Detection & Monitoring (GuardDuty, Security Hub, Inspector, Access Analyzer, AWS Config, log retention)
+
+**Criteria:** CC7.1, CC7.2, CC7.3, CC8.1 (CC6.1/CC6.3 for Access Analyzer)
+
+| ID | Title / summary |
+|---|---|
+| CC7.1 | Use detection and monitoring procedures to identify (1) changes to configurations that introduce new vulnerabilities and (2) susceptibilities to newly discovered vulnerabilities. |
+| CC7.2 | Monitor system components and the operation of those components for anomalies indicative of malicious acts, natural disasters, and errors. |
+| CC7.3 | Evaluate security events to determine whether they could or did result in a failure to meet objectives (security incidents). |
+| CC8.1 | Authorize, design, develop or acquire, configure, document, test, approve, and implement changes to infrastructure, data, software, and procedures. |
+
+**Why it matters:** Area 4 shows that activity is *logged*; this area shows that
+someone or something is *watching* it. GuardDuty is the CC7.2 anomaly detector;
+Security Hub aggregates findings so they can be triaged (CC7.3); Inspector is the
+CC7.1 "susceptibilities to newly discovered vulnerabilities" control for EC2, ECR
+images and Lambda; AWS Config is the CC7.1 configuration-change record and the
+evidence base for CC8.1 change testing; IAM Access Analyzer surfaces resources
+shared outside the account, a CC6.1/CC6.3 access-review input. Auditors test these
+*per region*: a service enabled in the primary region but not in a region with
+workloads (or one an attacker could use unseen) is a coverage gap. Log retention
+shorter than the audit period means the evidence for the period no longer exists.
+
+**AWS evidence that would satisfy it:**
+- GuardDuty detector `ENABLED` in every enabled region, ideally org-wide from a delegated administrator — `guardduty_enabled`
+- Security Hub enabled in every region with at least one standard (AWS FSBP or CIS) — `securityhub_enabled`
+- Inspector scanning EC2, ECR and Lambda in every region — `inspector_enabled`
+- An ACCOUNT or ORGANIZATION Access Analyzer active in every region, with findings reviewed — `access_analyzer_enabled`
+- AWS Config recording all supported resource types in every region, global types in one — `config_recorder_enabled`
+- CloudWatch log groups kept ≥ 365 days (or exported to S3 under a lifecycle policy that is) — `cloudwatch_log_group_retention`
+- Evidence that findings from these services are triaged by a named owner (tickets, Security Hub workflow status) — manual
+
+---
+
+## 8. Databases (RDS, DynamoDB, ElastiCache)
+
+**Criteria:** CC6.1, CC6.6, CC6.7, CC7.5, CC9.1
+
+| ID | Title / summary |
+|---|---|
+| CC6.1 | Implement logical access security over protected information assets (includes encryption of data at rest). |
+| CC6.6 | Implement logical access security measures to protect against threats from sources outside the system boundaries. |
+| CC6.7 | Restrict and protect the transmission, movement, and removal of information. |
+| CC7.5 | Identify, develop, and implement activities to recover from identified security incidents. |
+| CC9.1 | Identify, select, and develop risk mitigation activities for risks arising from potential business disruptions. |
+
+**Why it matters:** Databases hold the data a SOC 2 report is ultimately about. A
+publicly accessible RDS instance is the database equivalent of an open security
+group (CC6.6); an unencrypted instance, cluster or cache is a CC6.1 data-at-rest gap;
+plaintext connections to a cache are a CC6.7 transmission gap; and a manual RDS
+snapshot shared with "all" hands a full copy of the data to any AWS account (CC6.6
+and CC6.7 together). Backups, point-in-time recovery and deletion protection are
+the recovery side: CC7.5 requires the ability to restore after an incident such as
+ransomware or a destructive change, and CC9.1 covers business-disruption risk. If
+the report also covers the Availability category, these backup findings map to
+A1.2 as well.
+
+**AWS evidence that would satisfy it:**
+- No RDS instance with `PubliclyAccessible=true`; databases in private subnets — `rds_instance_not_public`
+- RDS instances and clusters encrypted at rest — `rds_storage_encrypted`
+- Automated backups kept ≥ 7 days (or the retention the backup policy sets) — `rds_backup_retention_7d`
+- Deletion protection on production databases — `rds_deletion_protection`
+- No manual RDS snapshot with `restore=all` — `rds_snapshot_not_public`
+- DynamoDB point-in-time recovery on — `dynamodb_pitr_enabled`
+- ElastiCache encrypted at rest and in transit (`required` mode), with AUTH or RBAC — `elasticache_encryption_at_rest`, `elasticache_encryption_in_transit`
+- Evidence that restores are tested (a dated restore test record) — manual
+
+---
+
+## 9. Encryption & Secrets (KMS, Secrets Manager, EBS, resource policies)
+
+**Criteria:** CC6.1, CC6.3, CC6.6, CC6.7
+
+| ID | Title / summary |
+|---|---|
+| CC6.1 | Implement logical access security over protected information assets (includes encryption and key management). |
+| CC6.3 | Authorize, modify, or remove access based on roles and responsibilities, using least privilege. |
+| CC6.6 | Implement logical access security measures to protect against threats from sources outside the system boundaries. |
+| CC6.7 | Restrict and protect the transmission, movement, and removal of information. |
+
+**Why it matters:** Encryption only protects data if the keys are managed: CC6.1
+points of focus include key generation, rotation and protection. Unrotated KMS keys
+and unrotated secrets (database passwords, API keys) extend the life of any
+credential that leaks. EBS encryption by default makes encryption the account's
+baseline rather than a per-volume decision. A resource policy that allows
+`Principal: "*"` with no condition — on a KMS key, secret, ECR repository or SNS
+topic — grants access outside the system boundary (CC6.6) and outside any
+role-based design (CC6.3); a publicly restorable EBS snapshot is an exfiltration
+path (CC6.7).
+
+**AWS evidence that would satisfy it:**
+- Automatic rotation on customer-managed symmetric KMS keys — `kms_cmk_rotation_enabled`
+- Secrets Manager rotation on, or a documented manual rotation for secrets that can't rotate automatically — `secrets_rotation_enabled`
+- No KMS key, secret, ECR repository or SNS topic policy allowing unrestricted `Principal: "*"` — `resource_policy_no_public_principal`
+- EBS encryption by default on in every region, and no unencrypted volumes — `ebs_default_encryption`, `ebs_volume_encrypted`
+- No publicly restorable EBS snapshot; snapshot Block Public Access set to `block-all-sharing` — `ebs_snapshot_not_public`
+- Key policies granting administration and usage to separate roles — manual
+
+---
+
+## 10. Containers (ECR)
+
+**Criteria:** CC7.1, CC8.1
+
+| ID | Title / summary |
+|---|---|
+| CC7.1 | Use detection and monitoring procedures to identify susceptibilities to newly discovered vulnerabilities. |
+| CC8.1 | Authorize, design, develop or acquire, configure, document, test, approve, and implement changes to infrastructure, data, software, and procedures. |
+
+**Why it matters:** For a container workload, the image is the software. Scanning
+images on push and continuously (Inspector enhanced scanning) is the CC7.1
+vulnerability-identification control for that software. Immutable tags make an
+image tag point at one tested build for good, so what was approved under CC8.1 is
+what runs; a mutable `:latest` can be overwritten after approval without any
+change record.
+
+**AWS evidence that would satisfy it:**
+- Every repository covered by enhanced scanning or scan-on-push — `ecr_image_scanning`
+- Image tags immutable — `ecr_tag_immutability`
+- No repository policy allowing `Principal: "*"` — `resource_policy_no_public_principal`
+- Evidence that critical and high image findings are remediated within a defined time — manual
 
 ---
 

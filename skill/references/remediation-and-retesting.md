@@ -176,7 +176,7 @@ framework being audited, and a finding doesn't stop being real just because
 checks are scoped to specific framework control mappings (see
 `check-catalog.md`); something a human reviewer notices while reading the
 raw snapshot — or that Trusted Advisor, Security Hub, or another tool flags
-— doesn't disappear because it isn't one of the 27 automated checks, or
+— doesn't disappear because it isn't one of the 49 automated checks, or
 because it's automated but unmapped for the framework currently being
 reported on.
 
