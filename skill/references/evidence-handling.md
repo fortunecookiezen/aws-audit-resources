@@ -102,7 +102,8 @@ A private engagement repository must be private and must not be a fork of this r
 ## What this repo does to support that lifecycle
 
 - **`.gitignore`** excludes `/audit-runs/` at the repo root, so an engagement directory placed inside the tool checkout is never accidentally staged even by a broad `git add`.
-- **`.gitguardian.yaml`** scopes secret scanning away from `skill/evals/fixtures/` — the *synthetic* data used by the eval suite — precisely so that exclusion stays narrow and doesn't become a habit of suppressing real findings. A real engagement directory should never reach a commit here in the first place; it has no corresponding allowlist entry, intentionally.
+- **Secret scanning (GitGuardian) covers the whole repo, with no exclusions,** including `skill/evals/fixtures/`. That directory's data is synthetic (see its `README.md`). If the scanner ever flags it, confirm the match is fixture data, and only then narrow an exclusion to that path. Don't let excluding paths become a habit of suppressing real findings. A real engagement directory should never reach a commit here in the first place, and it never gets an allowlist entry.
+- **`.gitignore`** ignores `/audit-runs/` and any `AWS_Security_Audit_*` report or tracker, as a backstop for output written into the repo by mistake.
 - **`skill/scripts/archive_engagement.sh`** writes the manifest and the encrypted archive, and checks the archive restores before deleting the plaintext.
 - **Nothing in this repo stores or transmits audit output anywhere.** `collect_aws_data.py` and `run_checks.py` only read from AWS and write to the local filesystem path you give them. Where that output ends up after that is entirely the steps above — this repo has no opinion on your evidence-repo or archive-storage choice beyond "not here."
 
