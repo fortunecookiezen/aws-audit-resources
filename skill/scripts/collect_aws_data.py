@@ -602,6 +602,13 @@ def collect_s3(session, account_id):
         if logging_conf is None:
             entry["unreadable"].append("logging_enabled")
         entry["logging_enabled"] = None if logging_conf is None else "LoggingEnabled" in logging_conf
+        # Where this bucket's access logs go. run_checks.py uses it to
+        # recognize a bucket that receives other buckets' logs (a log target
+        # can't usefully log to itself; see check_s3_bucket_logging_enabled).
+        entry["logging_target_bucket"] = (
+            None if logging_conf is None
+            else (logging_conf.get("LoggingEnabled") or {}).get("TargetBucket")
+        )
 
         buckets.append(entry)
 

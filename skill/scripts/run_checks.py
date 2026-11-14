@@ -1326,14 +1326,45 @@ def check_s3_bucket_mfa_delete(snap):
 
 
 def check_s3_bucket_logging_enabled(snap):
+    """A bucket that receives server access logs from other buckets in the
+    account, and doesn't log itself, passes as a log target. Logging a target
+    to itself is recursive (each delivery generates more log records), which
+    AWS advises against, and logging it to another bucket only moves the
+    finding to that bucket, so the last bucket in any logging chain would
+    otherwise always fail. The status comes from the collected logging
+    configuration, not from a claim in the exceptions file, and the evidence
+    names the source buckets so a reviewer can see what makes it a target.
+    A snapshot from before the collector recorded logging_target_bucket has
+    no targets to recognize and is evaluated as before."""
     buckets = snap.get("s3", {}).get("buckets")
     if buckets is None:
         return None
-    return [{
-        "resource": b["name"],
-        "status": "pass" if b.get("logging_enabled") else "fail",
-        "evidence": f"logging_enabled={b.get('logging_enabled')}",
-    } for b in _readable(buckets, "logging_enabled")]
+    readable = _readable(buckets, "logging_enabled")
+    names = {b["name"] for b in buckets}
+    sources = {}
+    for b in readable:
+        target = b.get("logging_target_bucket")
+        if b.get("logging_enabled") and target and target != b["name"] and target in names:
+            sources.setdefault(target, []).append(b["name"])
+    results = []
+    for b in readable:
+        if b.get("logging_enabled"):
+            evidence = "logging_enabled=True"
+            if b.get("logging_target_bucket"):
+                evidence += f", target={b['logging_target_bucket']}"
+            results.append({"resource": b["name"], "status": "pass", "evidence": evidence})
+        elif b["name"] in sources:
+            src = sorted(sources[b["name"]])
+            shown = ", ".join(src[:5]) + (f" and {len(src) - 5} more" if len(src) > 5 else "")
+            results.append({
+                "resource": b["name"],
+                "status": "pass",
+                "evidence": (f"logging_enabled=False; server access log target for {len(src)} bucket(s) "
+                             f"({shown}). A log target isn't required to log itself: doing so is recursive."),
+            })
+        else:
+            results.append({"resource": b["name"], "status": "fail", "evidence": "logging_enabled=False"})
+    return results
 
 
 def check_cloudtrail_multi_region_enabled(snap):

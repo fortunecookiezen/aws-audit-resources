@@ -13,6 +13,6 @@ Everything in this directory is **synthetic**. It was written for the skill's ev
 | `partial-iam-credential-report.csv` | eval 2 (SOC 2) | An IAM credential report alone, to test reporting on partial data. |
 | `soc2-extended-snapshot.json` | eval 3 (SOC 2) | The core sample plus every newer section: detection services, databases, KMS, secrets, EBS, ECR, SNS. |
 | `soc2-regions-snapshot.json`, `engagement-info-regions.md` | eval 4 (SOC 2) | The extended snapshot collected from three regions, with us-east-1 declared the only operating region and stray resources in eu-west-1. |
-| `soc2-passing-snapshot.json`, `exceptions-passing.json` | eval 5 (SOC 2) | The regions snapshot after remediation. It passes: two Lows are risk-accepted, one administrator is by design, and the other regions hold only AWS defaults. |
+| `soc2-passing-snapshot.json`, `exceptions-passing.json` | eval 5 (SOC 2) | The regions snapshot after remediation. It passes: two Lows are risk-accepted, one administrator is by design, the other regions hold only AWS defaults, and `acme-access-logs` receives the other buckets' access logs without logging itself (catalog footnote ¹²). |
 
 The later snapshots were derived from earlier ones by small, deliberate edits; check a new or changed fixture with `run_checks.py` against its eval's expectations. Keep everything here synthetic: never copy real collector output into this directory, even redacted.
