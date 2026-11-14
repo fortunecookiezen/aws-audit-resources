@@ -101,7 +101,8 @@
         "versioning_status": "Enabled",
         "mfa_delete": "Enabled",
         "logging_enabled": true,
-        "region": "us-east-1"
+        "region": "us-east-1",
+        "logging_target_bucket": "acme-access-logs"
       },
       {
         "name": "acme-customer-data",
@@ -116,7 +117,24 @@
         "versioning_status": "Enabled",
         "mfa_delete": "Disabled",
         "logging_enabled": true,
-        "region": "us-east-1"
+        "region": "us-east-1",
+        "logging_target_bucket": "acme-access-logs"
+      },
+      {
+        "name": "acme-access-logs",
+        "public_access_block": {
+          "BlockPublicAcls": true,
+          "IgnorePublicAcls": true,
+          "BlockPublicPolicy": true,
+          "RestrictPublicBuckets": true
+        },
+        "bucket_policy_present": true,
+        "has_https_only_deny": true,
+        "versioning_status": "Enabled",
+        "mfa_delete": "Enabled",
+        "logging_enabled": false,
+        "region": "us-east-1",
+        "logging_target_bucket": null
       }
     ]
   },
